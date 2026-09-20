@@ -296,6 +296,35 @@ function authHeaders(extra = {}) {
   return { "Authorization": `Bearer ${token}`, ...extra };
 }
 
+/* ---- rich source cards (dataset memory / web / tool / image) ---- */
+function sourceChip(s) {
+  const el = document.createElement(s.url ? "a" : "span");
+  if (s.url) { el.href = s.url; el.target = "_blank"; el.rel = "noopener"; }
+  el.className = `src-chip src-${s.kind || "web"}`;
+  const body = (icon, title, sub) =>
+    `<span class="src-ico">${icon}</span><span class="src-body">` +
+    `<span class="src-title">${escapeHtml(title || "")}</span>` +
+    (sub ? `<span class="src-sub">${escapeHtml(sub)}</span>` : "") + `</span>`;
+  if (s.kind === "dataset") {
+    el.innerHTML = body("📚", s.title || "dataset",
+      s.score != null ? `match ${(s.score * 100).toFixed(0)}%` : "");
+    el.title = s.snippet ? `${s.title} · line ${s.line_no ?? "?"}\n${s.snippet}` : (s.title || "");
+  } else if (s.kind === "image") {
+    el.innerHTML = `<img class="src-thumb" src="${s.url}" alt="">` +
+      `<span class="src-body"><span class="src-title">🖼 ${escapeHtml(s.title || "image")}</span>` +
+      (s.prompt ? `<span class="src-sub">${escapeHtml(String(s.prompt).slice(0, 48))}</span>` : "") +
+      `</span>`;
+    el.title = s.prompt || "generated image";
+  } else if (s.kind === "tool") {
+    el.innerHTML = body("🛠", `Tool · ${s.title || ""}`, "");
+  } else {
+    let host = "";
+    if (s.url) { try { host = new URL(s.url).hostname; } catch { host = ""; } }
+    el.innerHTML = body("🌐", s.title || host || "source", host);
+  }
+  return el;
+}
+
 function scrollBottom() {
   const chat = document.querySelector(".chat");
   chat.scrollTop = chat.scrollHeight;
@@ -333,16 +362,12 @@ function addMessage(role, text, meta = {}) {
       metaEl.innerHTML = `<span>${label}${conf}${langTag}</span>`;
     }
     if (meta.sources && meta.sources.length) {
-      for (const s of meta.sources.slice(0, 3)) {
-        const a = document.createElement("a");
-        a.className = "src-chip";
-        a.href = s.url || "#";
-        a.target = "_blank";
-        a.rel = "noopener";
-        a.textContent = s.title || s.url || "source";
-        a.title = s.title || "";
-        metaEl.appendChild(a);
+      const srcWrap = document.createElement("div");
+      srcWrap.className = "sources";
+      for (const s of meta.sources.slice(0, 4)) {
+        srcWrap.appendChild(sourceChip(s));
       }
+      wrap.insertBefore(srcWrap, metaEl);
     }
     if (meta.messageId) {
       const up = document.createElement("button");
@@ -921,7 +946,39 @@ function renderStats(d) {
   }
   html += "</table>";
   html += `<p style="margin-top:10px">${escapeHtml(JSON.stringify(d.feedback_policy || {}))}</p>`;
+
+  // ------------------------------------------------ model versions + rollback
+  const cps = (d.checkpoints && d.checkpoints.versions) || [];
+  html += "<h3>Model versions</h3>";
+  if (!cps.length) {
+    html += '<p class="muted">No model versions yet — one is saved automatically after each training run finishes.</p>';
+  } else {
+    html += '<table class="versions">';
+    for (const v of cps) {
+      const when = v.created_at ? new Date(v.created_at * 1000).toLocaleString() : "";
+      const loss = (v.loss_before != null && v.loss_after != null)
+        ? `${v.loss_before.toFixed(2)} → ${v.loss_after.toFixed(2)}` : "—";
+      const isLatest = d.checkpoints.latest === v.id;
+      html += `<tr>` +
+        `<td><span class="ver-id">${escapeHtml(v.id)}</span><br>` +
+        `<span class="ver-sub">${escapeHtml(v.trigger)} · ${v.steps} steps · loss ${loss} · ${when}</span></td>` +
+        `<td class="ver-actions">` +
+        (isLatest ? '<span class="ver-live">live</span>'
+                  : `<button class="rollback-btn" data-ckpt="${escapeHtml(v.id)}">↩ Roll back</button>`) +
+        ` <button class="rollback-btn dl-btn" data-ckpt="${escapeHtml(v.id)}" title="download weights (.npz)">⬇</button>` +
+        `</td></tr>`;
+    }
+    html += "</table>";
+  }
   statsBody.innerHTML = html;
+
+  // wire rollback buttons
+  for (const btn of statsBody.querySelectorAll(".rollback-btn:not(.dl-btn)")) {
+    btn.onclick = () => rollbackModel(btn.dataset.ckpt, btn);
+  }
+  for (const btn of statsBody.querySelectorAll(".dl-btn")) {
+    btn.onclick = () => downloadCheckpoint(btn.dataset.ckpt);
+  }
 
   const existing = document.querySelector(".notice.sticky");
   if (t.running) {
@@ -936,6 +993,38 @@ function renderStats(d) {
     if (existing) existing.remove();
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
+}
+
+function downloadCheckpoint(ckptId) {
+  const a = document.createElement("a");
+  a.href = `/api/model/versions/${encodeURIComponent(ckptId)}/download?token=${encodeURIComponent(token)}`;
+  a.download = `dew-ai-${ckptId}.npz`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function rollbackModel(ckptId, btn) {
+  if (!confirm(`Restore model version ${ckptId}? The live bot will hot-reload those weights.`)) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/model/rollback", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ id: ckptId }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showNotice(`↩ Model rolled back to ${data.rolled_back_to} (loss ${data.loss_after}) — hot-reloaded.`);
+    } else {
+      showNotice(`⚠️ ${data.detail || "rollback failed"}`);
+      btn.disabled = false;
+    }
+  } catch {
+    showNotice("⚠️ rollback failed");
+    btn.disabled = false;
+  }
+  refreshStatsIfOpen();
 }
 
 $("#trainBtn").onclick = async () => {

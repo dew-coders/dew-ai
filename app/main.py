@@ -168,7 +168,7 @@ def chat_stream(conversation_id: str, text: str, user: Dict,
         yield {"type": "status", "stage": "tool"}
         reply = tools.run(tool_name, tool_arg)
         mode, conf = "tool", 0.99
-        sources = [{"title": f"🛠 {tool_name}", "url": ""}]
+        sources = [{"kind": "tool", "title": tool_name, "url": ""}]
         yield {"type": "delta", "text": reply}
 
     # ------------------------------------------------ 3) image generation
@@ -177,7 +177,8 @@ def chat_stream(conversation_id: str, text: str, user: Dict,
         image_info = imagegen.generate(meta["image_prompt"])
         caption = ("🎨 " + (meta["image_prompt"] or "your image"))
         reply, mode, conf = caption, "image", 0.9
-        sources = [{"title": f"🖼 {image_info['provider']}", "url": image_info["url"]}]
+        sources = [{"kind": "image", "title": image_info["provider"],
+                    "url": image_info["url"], "prompt": meta["image_prompt"]}]
         yield {"type": "delta", "text": reply}
 
     # ------------------------------------------------ 4) live web search
@@ -190,7 +191,7 @@ def chat_stream(conversation_id: str, text: str, user: Dict,
                 if answer:
                     db.add_search_log(meta["search_query"], results)
                     mode, reply, conf, searched = "search", answer, 0.95, True
-                    sources = [{"title": r["title"], "url": r["url"]}
+                    sources = [{"kind": "web", "title": r["title"], "url": r["url"]}
                                for r in results[:3]]
                     yield {"type": "delta", "text": reply}
         except Exception as exc:
@@ -203,7 +204,10 @@ def chat_stream(conversation_id: str, text: str, user: Dict,
         if kb:
             mode, reply, conf = "knowledge", kb["text"], 0.8
             sources = (sources or []) + [
-                {"title": f"📚 {h['dataset']}", "url": ""} for h in kb["hits"]]
+                {"kind": "dataset", "title": h["dataset"], "url": "",
+                 "score": h.get("score"), "line_no": h.get("line_no"),
+                 "snippet": (h.get("text") or "")[:140]}
+                for h in kb["hits"]]
             yield {"type": "delta", "text": reply}
 
     # ------------------------------------------------ 6) neural net (streamed)
@@ -575,6 +579,21 @@ def model_rollback(request: Request, body: Dict = None):
     if target is None:
         raise HTTPException(404, "no checkpoint to roll back to")
     return {"rolled_back_to": target["id"], "loss_after": target["loss_after"]}
+
+
+@app.get("/api/model/versions/{ckpt_id}/download")
+def download_checkpoint(ckpt_id: str, request: Request):
+    """Download a saved model version's weights file (.npz)."""
+    require_user(request)
+    from app import checkpoints
+    from fastapi.responses import FileResponse
+    if checkpoints.get_checkpoint(ckpt_id) is None:
+        raise HTTPException(404, "checkpoint not found")
+    path = checkpoints.checkpoint_weights_path(ckpt_id)
+    if path is None:
+        raise HTTPException(404, "weights file missing for this checkpoint")
+    return FileResponse(path, filename=f"dew-ai-{ckpt_id}.npz",
+                        media_type="application/octet-stream")
 
 
 # --------------------------------------------------------------------------- #

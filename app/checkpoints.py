@@ -97,6 +97,16 @@ def get_checkpoint(ckpt_id: str) -> Optional[Dict]:
     return None
 
 
+def checkpoint_weights_path(ckpt_id: str) -> Optional[Path]:
+    """Path to a checkpoint's weights file (None if the version is unknown
+    or its file is missing) — used by the download endpoint."""
+    d = _ckpt_dir(ckpt_id)
+    if not (d / "meta.json").exists():
+        return None
+    weights = d / "model_weights.npz"
+    return weights if weights.exists() else None
+
+
 def rollback(ckpt_id: Optional[str] = None, steps_back: int = 1) -> Optional[Dict]:
     """Restore a previous model version as the live weights.
 
