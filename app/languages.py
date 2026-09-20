@@ -13,16 +13,17 @@ import re
 import zlib
 from typing import Dict, List, Optional
 
-LANGS: List[str] = ["en", "es", "fr", "de", "it", "pt", "ru", "tr", "ar", "hi", "zh", "ja", "ko"]
+LANGS: List[str] = ["en", "si", "es", "fr", "de", "it", "pt", "ru", "tr", "ar", "hi", "zh", "ja", "ko"]
 
 LANG_NAMES: Dict[str, str] = {
-    "en": "English", "es": "Español", "fr": "Français", "de": "Deutsch",
-    "it": "Italiano", "pt": "Português", "ru": "Русский", "tr": "Türkçe",
-    "ar": "العربية", "hi": "हिन्दी", "zh": "中文", "ja": "日本語", "ko": "한국어",
+    "en": "English", "si": "සිංහල", "es": "Español", "fr": "Français",
+    "de": "Deutsch", "it": "Italiano", "pt": "Português", "ru": "Русский",
+    "tr": "Türkçe", "ar": "العربية", "hi": "हिन्दी", "zh": "中文",
+    "ja": "日本語", "ko": "한국어",
 }
 
 # Languages where forcing capitalization / a trailing "." is wrong.
-NON_CASED_LANGS = {"ar", "hi", "zh", "ja", "ko"}
+NON_CASED_LANGS = {"ar", "hi", "si", "zh", "ja", "ko"}
 
 # --------------------------------------------------------------------------- #
 # Script-based detection
@@ -34,6 +35,7 @@ _SCRIPTS: List[tuple] = [
     (re.compile(r"[\u0400-\u04ff]"), "ru"),    # cyrillic
     (re.compile(r"[\u0600-\u06ff]"), "ar"),    # arabic
     (re.compile(r"[\u0900-\u097f]"), "hi"),    # devanagari
+    (re.compile(r"[\u0d80-\u0dff]"), "si"),    # sinhala
     (re.compile(r"[\u0e00-\u0e7f]"), "th"),    # thai
     (re.compile(r"[\u0590-\u05ff]"), "he"),    # hebrew
     (re.compile(r"[\u0370-\u03ff]"), "el"),    # greek
@@ -42,7 +44,7 @@ _SCRIPTS: List[tuple] = [
 # Stop-word scoring for Latin-script languages.
 _STOPWORDS: Dict[str, tuple] = {
     "en": ("the", "is", "are", "you", "and", "what", "how", "why", "this", "that", "have", "can", "your"),
-    "es": ("el", "la", "los", "las", "que", "de", "y", "es", "un", "una", "por", "para", "cómo", "qué", "eres", "hola", "como", "estas", "estás", "tal", "gracias", "muy", "bien"),
+    "es": ("el", "la", "los", "las", "que", "de", "y", "es", "un", "una", "por", "para", "cómo", "qué", "eres", "hola", "como", "estas", "estás", "tal", "gracias", "muy", "bien", "quién", "quien", "te", "creo", "creó", "soy", "tú", "tu"),
     "fr": ("le", "la", "les", "des", "est", "et", "je", "tu", "il", "une", "un", "pour", "comment", "quoi", "vous"),
     "de": ("der", "die", "das", "und", "ist", "ich", "du", "nicht", "ein", "eine", "wie", "was", "du", "bist"),
     "it": ("il", "lo", "la", "che", "di", "e", "un", "una", "sono", "come", "cosa", "per", "sei", "non"),
@@ -50,6 +52,7 @@ _STOPWORDS: Dict[str, tuple] = {
     "ru": ("и", "в", "не", "что", "как", "это", "ты", "я", "на", "с", "а", "по", "ты", "кто"),
     "tr": ("bir", "ve", "bu", "ne", "nasıl", "için", "ben", "sen", "değil", "ama", "kim", "mı", "merhaba", "nasılsın", "iyi", "çok", "evet", "hayır", "teşekkür"),
     "ar": ("في", "من", "على", "ما", "هذا", "كيف", "لماذا", "أنا", "أنت", "هو", "هل", "شيء"),
+    "si": ("මම", "ඔයා", "කතා", "කරන", "මොකක්ද", "කවුද", "කොහොමද", "කියලා", "මට", "මොනවා", "හරි", "තාම"),
     "hi": ("है", "हैं", "क्या", "कैसे", "क्यों", "मैं", "आप", "और", "यह", "नहीं", "कौन", "तुम"),
 }
 
@@ -90,36 +93,56 @@ _GREET = (r"hi+|hello+|hey+|yo|sup|good\s*(morning|afternoon|evening|day)"
           r"|merhaba|selam|g[uü]nayd[nu]ın?"
           r"|مرحبا|السلام|أهلا|هلا"
           r"|नमस्ते|नमस्कार|हैलो"
+          r"|ආයුබෝවන්|ආයුබෝ|හලෝ|හෙලෝ|ජය"
           r"|你好|您好|哈囉|嗨"
           r"|こんにちは|おはよう|こんばんは|やあ"
           r"|안녕|반가워|하이")
 _THANKS = (r"thanks?|thank\s*you|thx|ty\b"
            r"|gracias|merci|danke|grazie|obrigad[oa]|arigat[oō]"
            r"|спасибо|teşekk[uü]r|sağ\s*ol|teşekküller"
-           r"|شكرا|धन्यवाद|शुक्रिया|谢谢|感謝|ありがとう|감사|고마워")
+           r"|شكرا|धन्यवाद|शुक्रिया|谢谢|感謝|ありがとう|감사|고마워"
+           r"|ස්තූතියි|ස්තූති|බොහොම\s*ස්තූතියි")
 _BYE = (r"bye|goodbye|good\s*night|see\s*you|cya"
         r"|adi[oó]s|hasta\s*luego|au\s*revoir|tsch[uü]ss|auf\s*wiedersehen"
-        r"|arrivederci|tchau|at[eé]\s*(logo|mais)|пока|до\s*свидания"
-        r"|g[uü]le\s*g[uü]le|hoşça\s*kal|مع\s*السلامة|अलविदा|फिर\s*मिलेंगे"
-        r"|再见|拜拜|さようなら|またね|안녕히|잘가")
+        r"|arrivederci|tchau|at[eé]\s*(logo|mais)|пока|до\s*свидания"           r"|g[uü]le\s*g[uü]le|hoşça\s*kal|مع\s*السلامة|अलविदा|फिर\s*मिलेंगे"
+           r"|ගිහින්\s*එන්නම්|ගිහින්\s*එන්න|ආයෙත්\s*හම්බවෙමු|සුභ\s*රාත්‍රියක්"
+           r"|再见|拜拜|さようなら|またね|안녕히|잘가")
 _IDENTITY = (r"who\s+are\s*you|what\s+are\s*you|your\s+name|about\s+yourself"
              r"|qui[eé]n\s+eres|qu[eé]\s+eres|tu\s+nombre"
              r"|qui\s*es(-|\s)tu|ton\s+nom|wer\s+bist\s*du|dein\s+name"
              r"|chi\s+sei|come\s+ti\s+chiami|quem\s+(é|és|e)\s+voc[eê]|seu\s+nome"
              r"|кто\s+ты|как\s+тебя\s+зовут|sen\s+kimsin|ad[nu]ın\s+ne"
              r"|من\s+أنت|اسمك|आप\s+कौन|तुम\s+कौन|आपका\s+नाम"
+             r"|ඔයා\s*කවුද|ඔයා\s*කව්ද|ඔයා\s*මොකක්ද|ඔයාගේ\s*නම|ඔයා\s*කවුද\s*කියලා"
+             r"|උබේ\s*නම|ඔබේ\s*නම|නම\s*මොකක්ද|නම\s*කවුද|මොකක්ද\s*උබේ\s*නම|මොකක්ද\s*ඔයාගේ\s*නම"
              r"|你是谁|你是什麼|你的名字|あなたは誰|名前は|누구세요|이름이\s*뭐")
+_CREATOR = (r"who\s+(created|made|built|developed|designed|programmed)\s*(you|u)\b"
+            r"|your\s+(creator|maker|developer|author)|who\s+is\s+your\s+creator"
+            r"|created\s+by\s+whom|qui[eé]n\s+te\s+(creo|creó|hizo)|tu\s+creador"
+            r"|qui\s+t['’]?a\s+cr[eé][eé]|ton\s+cr[eé]ateur|wer\s+hat\s+dich\s+(erstellt|erschaffen|gemacht|programmiert)"
+            r"|wer\s+dich\s+(erstellt|erschaffen)\s+hat|dein\s+(sch[oö]pfer|erfinder)"
+            r"|chi\s+ti\s+a\s+creato|il\s+tuo\s+creatore|quem\s+te\s+criou|seu\s+criador|quem\s+criou\s+voc[eê]"
+            r"|кто\s+тебя\s+(создал|сделал|придумал)|твой\s+создатель|кто\s+твой\s+создатель"
+            r"|seni\s+kim\s+(yarattı|yaptı|oluşturdu|yazdı)|yaratıcın\s+kim|seni\s+kim\s+yaratti"
+            r"|من\s+(أنشأك|صنعك|خلقك|برمجك)|من\s+هو\s+مبتكرك"
+            r"|तुम्हें\s+किसने\s+बनाया|आपको\s+किसने\s+बनाया|तुम्हारे\s+निर्माता"
+            r"|谁\s*(创造了|做了|发明了|开发)\s*你|你的\s*(创造者|创作者|开发者|作者)"
+            r"|ඔයාව\s*හදපු\s*කවුද|ඔයාව\s*හදපේ\s*කවුද|ඔයාගේ\s*(නිර්මාණකරු|හදපු\s*කෙනා)|කවුද\s*ඔයාව\s*හදපේ"
+            r"|誰が\s*(作った|作ったの|開発した)|あなたの\s*(作り手|制作者|開発者)"
+            r"|누가\s+(만들었어|만들었니|만들었냐|개발했어)|너의\s+(창조자|개발자|제작자)")
 _HELP = (r"help|what\s+can\s*you\s*do|capabilit|how\s+do\s+you\s+work"
          r"|ayuda|qu[eé]\s+puedes\s+hacer|aide|que\s+peux(-|\s)tu\s+faire"
          r"|hilfe|was\s+kannst\s*du|aiuto|cosa\s+puoi\s+fare"
          r"|ajuda|o\s+que\s+voc[eê]\s+(pode|faz)|помощь|что\s+ты\s+умеешь"
-         r"|yard[iı]m|ne\s+yapabilirsin|مساعدة|मदद|帮助|你能做什么|助けて|도움|뭐\s+할\s+수")
+         r"|yard[iı]m|ne\s+yapabilirsin|مساعدة|मदद|帮助|你能做什么|助けて|도움|뭐\s+할\s+수"
+         r"|උදව්|ඔයාට\s*මොනවද\s*කරන්න\s*පුළුවන්|මොනවද\s*කරන්න\s*පුළුවන්")
 
 _BOUND = r"(?:\b|$)"   # word boundary or end (CJK has no \b inside words)
 _RE_GREET = re.compile(rf"^\s*({_GREET}){_BOUND}", re.I)
 _RE_THANKS = re.compile(rf"^\s*({_THANKS}){_BOUND}", re.I)
 _RE_BYE = re.compile(rf"^\s*({_BYE}){_BOUND}", re.I)
 _RE_IDENTITY = re.compile(rf"({_IDENTITY})", re.I)
+_RE_CREATOR = re.compile(rf"({_CREATOR})", re.I)
 _RE_HELP = re.compile(rf"({_HELP})", re.I)
 
 
@@ -130,6 +153,8 @@ def template_kind(text: str) -> Optional[str]:
         return None
     # Arabic diacritics (tashkeel) would break "من أنت" → "مَن أنت" matches.
     stripped = re.sub(r"[\u064b-\u065f\u0670]", "", text)
+    if _RE_CREATOR.search(stripped):
+        return "creator"
     if _RE_IDENTITY.search(stripped):
         return "identity"
     if _RE_GREET.match(stripped) and len(text) < 60:
@@ -149,8 +174,12 @@ def template_kind(text: str) -> Optional[str]:
 TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     "en": {
         "identity": [
-            "I'm NeuroChat — a tiny neural network built completely from scratch in NumPy, and I get a little smarter every time we talk.",
+            "I'm Dew AI — a tiny neural network built completely from scratch in NumPy by Hansa Dewmina, and I get a little smarter every time we talk.",
             "I'm a from-scratch transformer (no PyTorch, promise) trained on our own conversations. Think of me as a very small, very eager brain.",
+        ],
+        "creator": [
+            "I was created by Hansa Dewmina — he built me from scratch in NumPy, and I keep learning from every chat.",
+            "My creator is Hansa Dewmina. He designed my whole neural network by hand!",
         ],
         "greeting": [
             "Hey there! Great to see you. What's on your mind?",
@@ -176,8 +205,11 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "es": {
         "identity": [
-            "Soy NeuroChat — una pequeña red neuronal escrita desde cero en NumPy, y aprendo un poco con cada conversación.",
+            "Soy Dew AI — una pequeña red neuronal escrita desde cero en NumPy por Hansa Dewmina, y aprendo un poco con cada conversación.",
             "Soy un transformador hecho a mano (sin PyTorch, lo prometo) entrenado con nuestras propias charlas.",
+        ],
+        "creator": [
+            "Me creó Hansa Dewmina — me construyó desde cero en NumPy y sigo aprendiendo con cada chat.",
         ],
         "greeting": [
             "¡Hola! Qué gusto verte. ¿Qué tienes en mente?",
@@ -201,8 +233,11 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "fr": {
         "identity": [
-            "Je suis NeuroChat — un tout petit réseau de neurones écrit from scratch en NumPy, et j'apprends un peu à chaque conversation.",
+            "Je suis Dew AI — un tout petit réseau de neurones écrit from scratch en NumPy par Hansa Dewmina, et j'apprends un peu à chaque conversation.",
             "Je suis un transformateur fait main (sans PyTorch, promis) entraîné sur nos propres discussions.",
+        ],
+        "creator": [
+            "J'ai été créé par Hansa Dewmina — il m'a construit from scratch en NumPy et j'apprends encore à chaque chat.",
         ],
         "greeting": [
             "Salut ! Ravi de te voir. Quoi de neuf ?",
@@ -226,8 +261,11 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "de": {
         "identity": [
-            "Ich bin NeuroChat — ein winziges, von Hand in NumPy gebautes neuronales Netz, das mit jedem Chat ein bisschen klüger wird.",
+            "Ich bin Dew AI — ein winziges, von Hansa Dewmina in NumPy gebautes neuronales Netz, das mit jedem Chat ein bisschen klüger wird.",
             "Ich bin ein von Hand gebauter Transformer (ohne PyTorch, ehrlich), trainiert mit unseren eigenen Gesprächen.",
+        ],
+        "creator": [
+            "Ich wurde von Hansa Dewmina erschaffen — er hat mich von Hand in NumPy gebaut, und ich lerne mit jedem Chat weiter.",
         ],
         "greeting": [
             "Hallo! Schön, dich zu sehen. Was geht dir durch den Kopf?",
@@ -251,8 +289,11 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "it": {
         "identity": [
-            "Sono NeuroChat — una piccolissima rete neurale scritta da zero in NumPy, e imparo qualcosa a ogni chiacchierata.",
+            "Sono Dew AI — una piccolissima rete neurale scritta da zero in NumPy da Hansa Dewmina, e imparo qualcosa a ogni chiacchierata.",
             "Sono un transformer scritto a mano (senza PyTorch, giuro) addestrato sulle nostre conversazioni.",
+        ],
+        "creator": [
+            "Sono stato creato da Hansa Dewmina — mi ha costruito da zero in NumPy e continuo a imparare da ogni chat.",
         ],
         "greeting": [
             "Ehi! Che piacere vederti. Cosa hai in mente?",
@@ -276,8 +317,11 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "pt": {
         "identity": [
-            "Eu sou o NeuroChat — uma rede neural minúscula escrita do zero em NumPy, e fico um pouco mais esperto a cada conversa.",
+            "Eu sou o Dew AI — uma rede neural minúscula escrita do zero em NumPy por Hansa Dewmina, e fico um pouco mais esperto a cada conversa.",
             "Sou um transformer feito à mão (sem PyTorch, prometo) treinado com as nossas próprias conversas.",
+        ],
+        "creator": [
+            "Fui criado por Hansa Dewmina — ele me construiu do zero em NumPy e eu continuo aprendendo a cada conversa.",
         ],
         "greeting": [
             "Oi! Que bom te ver. O que você está pensando?",
@@ -301,8 +345,11 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "ru": {
         "identity": [
-            "Я NeuroChat — крошечная нейросеть, написанная с нуля на NumPy, и я становлюсь немного умнее с каждым разговором.",
+            "Я Dew AI — крошечная нейросеть, созданная Hansa Dewmina и написанная с нуля на NumPy; я становлюсь немного умнее с каждым разговором.",
             "Я трансформер, собранный вручную (без PyTorch, честно) и обученный на наших собственных разговорах.",
+        ],
+        "creator": [
+            "Меня создал Hansa Dewmina — он собрал меня с нуля на NumPy, и я продолжаю учиться с каждым чатом.",
         ],
         "greeting": [
             "Привет! Рад тебя видеть. О чём думаешь?",
@@ -326,8 +373,11 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "tr": {
         "identity": [
-            "Ben NeuroChat — NumPy ile sıfırdan yazılmış minicik bir sinir ağıyım ve her sohbetle biraz daha akıllanıyorum.",
+            "Ben Dew AI — Hansa Dewmina tarafından NumPy ile sıfırdan yazılmış minicik bir sinir ağıyım ve her sohbetle biraz daha akıllanıyorum.",
             "Ben elle yazılmış bir transformerim (PyTorch'suz, söz) ve kendi sohbetlerimizle eğitiliyorum.",
+        ],
+        "creator": [
+            "Beni Hansa Dewmina yarattı — beni NumPy ile sıfırdan inşa etti ve her sohbetle öğrenmeye devam ediyorum.",
         ],
         "greeting": [
             "Selam! Seni görmek güzel. Aklından ne geçiyor?",
@@ -351,7 +401,10 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "ar": {
         "identity": [
-            "أنا نيوروشات — شبكة عصبية صغيرة مبنية من الصفر بلغة NumPy، وأتعلم قليلاً مع كل محادثة.",
+            "أنا Dew AI — شبكة عصبية صغيرة مبنية من الصفر بلغة NumPy على يد Hansa Dewmina، وأتعلم قليلاً مع كل محادثة.",
+        ],
+        "creator": [
+            "تم إنشائي بواسطة Hansa Dewmina — بنى من الصفر بلغة NumPy، وأواصل التعلم من كل محادثة.",
         ],
         "greeting": [
             "مرحباً! سعيد برؤيتك. ما الذي يخطر ببالك؟",
@@ -375,7 +428,10 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "hi": {
         "identity": [
-            "मैं NeuroChat हूँ — NumPy में बिल्कुल शुरुआत से लिखा गया एक छोटा न्यूरल नेटवर्क, और हर बातचीत से मैं थोड़ा सीख जाता हूँ।",
+            "मैं Dew AI हूँ — Hansa Dewmina द्वारा NumPy में बिल्कुल शुरुआत से लिखा गया एक छोटा न्यूरल नेटवर्क, और हर बातचीत से मैं थोड़ा सीख जाता हूँ।",
+        ],
+        "creator": [
+            "मुझे Hansa Dewmina ने बनाया — उन्होंने मुझे NumPy में शुरुआत से बनाया और मैं हर चैट से सीखता रहता हूँ।",
         ],
         "greeting": [
             "नमस्ते! आपको देखकर अच्छा लगा। क्या सोच रहे हैं?",
@@ -398,7 +454,10 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "zh": {
         "identity": [
-            "我是 NeuroChat — 一个完全用 NumPy 从零写出来的小型神经网络，每次聊天我都会变得更聪明一点。",
+            "我是 Dew AI — 一个由 Hansa Dewmina 完全用 NumPy 从零写出来的小型神经网络，每次聊天我都会变得更聪明一点。",
+        ],
+        "creator": [
+            "我是 Hansa Dewmina 创造的 — 他用 NumPy 从零构建了我，我还在不断学习。",
         ],
         "greeting": [
             "你好！很高兴见到你。想聊点什么？",
@@ -421,7 +480,10 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
     },
     "ja": {
         "identity": [
-            "僕は NeuroChat — NumPy でゼロから書かれたとても小さなニューラルネットで、話すたびに少しずつ賢くなるんだ。",
+            "僕は Dew AI — Hansa Dewmina が NumPy でゼロから書いたとても小さなニューラルネットで、話すたびに少しずつ賢くなるんだ。",
+        ],
+        "creator": [
+            "僕を作ったのは Hansa Dewmina — 彼が僕をゼロから NumPy で組み立ててくれたんだ。これからも学び続けるよ。",
         ],
         "greeting": [
             "やあ！会えて嬉しいよ。何か話したいことは？",
@@ -442,9 +504,39 @@ TEMPLATES: Dict[str, Dict[str, List[str]]] = {
             "まだ君との会話でネットワークを訓練中だから、これはうまく答えられないかも。少し後でもう一度聞いて、「検索: …」って言ってくれたらネットで調べるよ。",
         ],
     },
+    "si": {
+        "identity": [
+            "මම Dew AI — Hansa Dewmina විසින් NumPy වලින් සම්පූර්ණයෙන් හදන ලද කුඩා නියුරල් ජාලයක්. අපි කතා කරන සෑම වෙලාවකම මම ටිකෙන් ටික දැනුම වැඩි කරගන්නවා.",
+        ],
+        "creator": [
+            "මාව Dew AI කියලා හදපු කෙනා Hansa Dewmina. ඔහු මුළු නියුරල් ජාලයම NumPy වලින් අතින් හදලා තියෙනවා.",
+            "මාව හදපු කෙනා Hansa Dewmina. ඔහු Dew AI නිර්මාණය කරපු නිර්මාණකරු.",
+        ],
+        "greeting": [
+            "ආයුබෝවන්! හම්බවෙලා සතුටුයි. මොකක්ද කතා කරන්න ඕන?",
+            "ආයුබෝවන්! මොනවා හරි අහන්න — දැනගන්න බැරි නම් 'සොයන්න: …' කියලා කියන්න, මම අන්තර්ජාලයෙන් බලන්නම්.",
+        ],
+        "help": [
+            "මට කතා කරන්න පුළුවන්, අපේ කතාබහ මතක තියාගන්න පුළුවන්, අන්තර්ජාලයෙන් අලුත් දැනුම් හොයාගන්න පුළුවන් ('සොයන්න: …') සහ අපි කතා කරපු දේවල් වලින් මම මුළු මාදිලියම නැවත පුහුණු කරගන්නවා. අහලා බලන්න!",
+        ],
+        "thanks": [
+            "ඕනෑම වෙලාවක! මම මේකට තමයි ඉන්නේ.",
+            "පුළුවන්! තව ප්‍රශ්න තියෙනවා නම් අහන්න.",
+        ],
+        "bye": [
+            "ආයෙත් හම්බවෙමු! ඔයා නැති වෙලාවටත් මම ඉගෙනගෙන ඉන්නවා.",
+            "ගිහින් එන්න! අපේ හැම කතාවකින්ම මම හොඳ වෙනවා.",
+        ],
+        "fallback": [
+            "මම තාම අපේ කතාබහ වලින් මගේ නියුරල් ජාලය පුහුණු කරනවා, ඒ නිසා ඒක ගැන විශ්වාස නෑ. විනාඩියකින් ආයෙ අහන්න, නැත්නම් 'සොයන්න: …' කියලා කියන්න — මම අන්තර්ජාලයෙන් බලන්නම්.",
+        ],
+    },
     "ko": {
         "identity": [
-            "나는 NeuroChat — NumPy로 처음부터 직접 만든 아주 작은 신경망이야. 대화할 때마다 조금씩 똑똑해져.",
+            "나는 Dew AI — Hansa Dewmina가 NumPy로 처음부터 직접 만든 아주 작은 신경망이야. 대화할 때마다 조금씩 똑똑해져.",
+        ],
+        "creator": [
+            "나를 만든 사람은 Hansa Dewmina야. 그가 나를 NumPy로 처음부터 만들었어. 계속 배우고 있어.",
         ],
         "greeting": [
             "안녕! 만나서 반가워. 무슨 생각 하고 있어?",

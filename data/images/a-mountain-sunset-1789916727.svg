@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+<stop offset="0%" stop-color="hsl(127, 70%, 55%)"/><stop offset="100%" stop-color="hsl(108, 70%, 65%)"/>
+</linearGradient></defs>
+<rect width="800" height="600" fill="url(#bg)"/>
+<circle cx="7" cy="150" r="47" fill="hsl(108, 70%, 65%)" opacity="0.35"/><circle cx="600" cy="468" r="121" fill="hsl(127, 70%, 55%)" opacity="0.35"/><circle cx="275" cy="358" r="180" fill="hsl(108, 70%, 65%)" opacity="0.35"/><circle cx="634" cy="419" r="155" fill="hsl(127, 70%, 55%)" opacity="0.35"/><circle cx="79" cy="52" r="188" fill="hsl(127, 70%, 55%)" opacity="0.35"/><circle cx="209" cy="531" r="197" fill="hsl(127, 70%, 55%)" opacity="0.35"/><circle cx="526" cy="441" r="119" fill="hsl(127, 70%, 55%)" opacity="0.35"/><circle cx="165" cy="55" r="139" fill="hsl(108, 70%, 65%)" opacity="0.35"/><circle cx="220" cy="6" r="64" fill="hsl(127, 70%, 55%)" opacity="0.35"/><circle cx="27" cy="0" r="86" fill="hsl(127, 70%, 55%)" opacity="0.35"/><circle cx="3" cy="0" r="51" fill="hsl(127, 70%, 55%)" opacity="0.35"/><circle cx="0" cy="0" r="122" fill="hsl(108, 70%, 65%)" opacity="0.35"/><circle cx="0" cy="0" r="100" fill="hsl(344, 70%, 70%)" opacity="0.35"/><circle cx="0" cy="0" r="95" fill="hsl(344, 70%, 70%)" opacity="0.35"/>
+<text x="40" y="560" font-family="Segoe UI, sans-serif" font-size="22" fill="white" opacity="0.9">a mountain sunset</text>
+</svg>

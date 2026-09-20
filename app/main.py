@@ -23,6 +23,7 @@ per-message language detection driving a multi-language reply system.
 from __future__ import annotations
 
 import re
+import threading
 import zlib
 from contextlib import asynccontextmanager
 from typing import Dict, Iterator, List, Optional
@@ -33,7 +34,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 from starlette.concurrency import iterate_in_threadpool
 
-from app import config, database as db, engine, humanize, languages, pipeline, search, sync, train
+from app import config, database as db, datacol, datasets, engine, humanize, imagegen, knowledge, languages, memory, pipeline, router, safety, search, sync, system_prompt, tools, train
 
 
 # --------------------------------------------------------------------------- #
@@ -44,6 +45,11 @@ async def lifespan(_: FastAPI):
     db.init_db()
     engine.engine.refresh()
     sync.start()
+    # Long-term dataset memory: verify + auto-heal, then (re)build the
+    # knowledge index from whatever the registry holds.
+    for info in datasets.ensure_all():
+        print(f"[datasets] {info['name']}: {info['status']}", flush=True)
+    knowledge.build_index()
     if not engine.engine.ready:
         print("[boot] no weights found — training the model from scratch in the "
               "background (the chat will use templates until it's ready)…", flush=True)
@@ -51,7 +57,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="NeuroChat", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Dew AI", version="0.2.0", lifespan=lifespan)
 
 
 # --------------------------------------------------------------------------- #
@@ -82,8 +88,13 @@ def _user_from_ws_token(token: str) -> Optional[Dict]:
 # --------------------------------------------------------------------------- #
 # Prompt building & chat pipeline (multi-language aware)
 # --------------------------------------------------------------------------- #
-def build_prompt(history: List[Dict], user_text: str) -> str:
+def build_prompt(history: List[Dict], user_text: str,
+                 system_block: str = "") -> str:
+    """Chat-format prompt: system context + recency window + the new message."""
     lines: List[str] = []
+    if system_block:
+        lines.append(system_block)
+        lines.append("")
     for m in history[-6:]:
         content = m["content"].replace("\n", " ").strip()[:200]
         who = "User" if m["role"] == "user" else "Bot"
@@ -91,54 +102,117 @@ def build_prompt(history: List[Dict], user_text: str) -> str:
     lines.append(f"User: {user_text.strip()[:300]}")
     lines.append("Bot:")
     prompt = "\n".join(lines)
-    if len(prompt) > 800:  # keep inside a sane window for the tiny model
-        prompt = "\n".join(prompt.split("\n")[-6:])
+    if len(prompt) > 1200:  # keep inside the model's context window
+        prompt = "\n".join(prompt.split("\n")[-10:])
     return prompt
 
 
-def chat_stream(conversation_id: str, text: str) -> Iterator[Dict]:
-    """Shared chat pipeline. Yields events consumed by WS and REST alike:
-    status / notice / delta / done."""
-    lang = languages.detect_language(text)
-    user_msg_id = db.add_message(conversation_id, "user", text, lang=lang)
+# stop-generation support: one Event per active conversation
+_ACTIVE_STOPS: Dict[str, threading.Event] = {}
+
+_SUGGESTIONS = {
+    "en": ["Tell me more about that", "Search the web for it", "Draw an image of it"],
+    "si": ["තව කියන්න", "අන්තර්ජාලයේ සොයන්න", "රූපයක් හදන්න"],
+    "es": ["Cuéntame más", "Búscalo en la web", "Dibuja una imagen"],
+}
+
+
+def _suggest_followups(route: str, lang: str) -> List[str]:
+    base = _SUGGESTIONS.get(lang, _SUGGESTIONS["en"])
+    if route in ("tool", "image"):
+        return base[:1] + ["What else can you do?" if lang == "en" else base[0]]
+    return base
+
+
+def chat_stream(conversation_id: str, text: str, user: Dict,
+                skip_user_save: bool = False,
+                lang_override: Optional[str] = None) -> Iterator[Dict]:
+    """Shared chat pipeline (router-driven). Yields events consumed by WS and
+    REST alike: status / notice / delta / done."""
+    lang = lang_override or languages.detect_language(text)
+    user_msg_id = None
+    if not skip_user_save:
+        user_msg_id = db.add_message(conversation_id, "user", text, lang=lang)
+        # auto-title (ChatGPT-style): first user message names the conversation
+        conv = db.get_conversation(conversation_id)
+        if conv and not (conv.get("title") or "").strip():
+            db.update_conversation_title(conversation_id, text.strip()[:60])
+
+    # long-term memory: extract facts from what the user just said
+    stored_facts = memory.process_message(user["id"], text)
+    if stored_facts:
+        yield {"type": "notice", "text": "🧠 Remembered: "
+               + ", ".join(f"{f['kind']}: {f['value']}" for f in stored_facts)}
 
     yield {"type": "status", "stage": "thinking"}
 
+    route, meta = router.classify(text)
     mode, reply, conf, sources, searched = "fallback", "", 0.0, [], False
+    image_info: Optional[Dict] = None
 
-    # 1) Simple chit-chat gets an instant localized template answer.
-    tpl_kind = languages.template_kind(text)
-    if tpl_kind:
-        reply = languages.template_reply(text, tpl_kind, lang)
+    # ------------------------------------------------ 0) safety screening
+    flag, safe_reply = safety.screen_input(text)
+    if flag:
+        route, mode, reply, conf = "safety", "safety", safe_reply, 0.99
+        yield {"type": "delta", "text": reply}
+
+    # ------------------------------------------------ 1) chit-chat templates
+    if not reply and route == "chitchat":
+        reply = languages.template_reply(text, meta["template_kind"], lang)
         mode, conf = "template", 0.85
         yield {"type": "delta", "text": reply}
 
-    # 2) Factual / current-events questions go to the web-search mechanism.
-    if not reply:
-        query = search.needs_search(text)
-        if query:
-            yield {"type": "status", "stage": "searching"}
-            try:
-                results = search.web_search(query)
-                if results:
-                    answer, hosts = search.compose_answer(query, results)
-                    if answer:
-                        db.add_search_log(query, results)
-                        mode, reply, conf, searched = "search", answer, 0.95, True
-                        sources = [
-                            {"title": r["title"], "url": r["url"]} for r in results[:3]
-                        ]
-                        yield {"type": "delta", "text": reply}
-            except Exception as exc:  # network down, rate limited, etc.
-                yield {"type": "notice",
-                       "text": f"Web search unavailable ({exc.__class__.__name__}) — answering from my own head."}
+    # ------------------------------------------------ 2) tools (task execution)
+    elif not reply and route == "tool":
+        tool_name, tool_arg = meta["tool"], meta["tool_arg"]
+        yield {"type": "status", "stage": "tool"}
+        reply = tools.run(tool_name, tool_arg)
+        mode, conf = "tool", 0.99
+        sources = [{"title": f"🛠 {tool_name}", "url": ""}]
+        yield {"type": "delta", "text": reply}
 
-    # 3) Everything else goes through the neural network (streamed). The tiny
-    #    char-level model is English-only, so non-English gets a localized
-    #    template answer instead of gibberish.
+    # ------------------------------------------------ 3) image generation
+    elif not reply and route == "image":
+        yield {"type": "status", "stage": "painting"}
+        image_info = imagegen.generate(meta["image_prompt"])
+        caption = ("🎨 " + (meta["image_prompt"] or "your image"))
+        reply, mode, conf = caption, "image", 0.9
+        sources = [{"title": f"🖼 {image_info['provider']}", "url": image_info["url"]}]
+        yield {"type": "delta", "text": reply}
+
+    # ------------------------------------------------ 4) live web search
+    elif not reply and route == "search":
+        yield {"type": "status", "stage": "searching"}
+        try:
+            results = search.web_search(meta["search_query"])
+            if results:
+                answer, hosts = search.compose_answer(meta["search_query"], results)
+                if answer:
+                    db.add_search_log(meta["search_query"], results)
+                    mode, reply, conf, searched = "search", answer, 0.95, True
+                    sources = [{"title": r["title"], "url": r["url"]}
+                               for r in results[:3]]
+                    yield {"type": "delta", "text": reply}
+        except Exception as exc:
+            yield {"type": "notice",
+                   "text": f"Web search unavailable ({exc.__class__.__name__}) — trying my own head."}
+
+    # ------------------------------------------------ 5) knowledge (dataset memory)
+    if not reply and (route in ("search", "knowledge") or lang != "en"):
+        kb = knowledge.answer(text)
+        if kb:
+            mode, reply, conf = "knowledge", kb["text"], 0.8
+            sources = (sources or []) + [
+                {"title": f"📚 {h['dataset']}", "url": ""} for h in kb["hits"]]
+            yield {"type": "delta", "text": reply}
+
+    # ------------------------------------------------ 6) neural net (streamed)
     if not reply:
         history = db.get_recent_messages(conversation_id, 6)
-        prompt = build_prompt(history, text)
+        mem_block = memory.recall_text(user["id"])
+        sys_block = system_prompt.build(user, lang, memory_block=mem_block,
+                                        route=route)
+        prompt = build_prompt(history, text, sys_block)
         gen = engine.engine.stream(prompt)
         if gen is None:
             reply = languages.template_reply(text, "fallback", lang)
@@ -146,14 +220,20 @@ def chat_stream(conversation_id: str, text: str) -> Iterator[Dict]:
             yield {"type": "delta", "text": reply}
         else:
             yield {"type": "status", "stage": "generating"}
+            stop = _ACTIVE_STOPS.setdefault(conversation_id, threading.Event())
             parts: List[str] = []
             final: Optional[Dict] = None
-            for event in gen:
-                if event["type"] == "delta":
-                    parts.append(event["text"])
-                    yield event
-                else:
-                    final = event
+            try:
+                for event in gen:
+                    if stop.is_set():
+                        break
+                    if event["type"] == "delta":
+                        parts.append(event["text"])
+                        yield event
+                    else:
+                        final = event
+            finally:
+                _ACTIVE_STOPS.pop(conversation_id, None)
             raw = (final or {}).get("reply") or "".join(parts)
             conf = float((final or {}).get("confidence", 0.0))
             if raw and lang == "en":
@@ -162,22 +242,41 @@ def chat_stream(conversation_id: str, text: str) -> Iterator[Dict]:
                 mode = "template"
                 reply = languages.template_reply(text, "fallback", lang)
 
-    # 4) Humanize, persist (instant local save + cloud queue), and feed the
-    #    continuous-learning loop.
+    # ------------------------------------------------ persist + learning loop
     final_text = humanize.humanize(reply, allow_softener=(mode == "neural"), lang=lang)
+    final_text = safety.screen_output(final_text)
     msg_id = db.add_message(conversation_id, "assistant", final_text, mode, conf, lang=lang)
-    if mode in ("neural", "search", "template"):
+    if mode in ("neural", "search", "template", "knowledge"):
         pipeline.record_exchange(text, final_text, mode, lang=lang)
     pending = pipeline.maybe_start_retrain()
     if pending:
         yield {"type": "notice",
                "text": f"🧠 {pending} new exchanges collected — fine-tuning started in the background."}
+    if mode == "neural" and conf < config.LOW_CONFIDENCE_THRESHOLD:
+        yield {"type": "notice",
+               "text": "🎓 I'm still learning this topic — vote 👍/👎 to teach me."}
 
     yield {"type": "done", "conversation_id": conversation_id,
            "user_message_id": user_msg_id, "message_id": msg_id,
-           "reply": final_text, "source": mode,
+           "reply": final_text, "source": mode, "route": route,
            "confidence": round(conf, 3), "searched": searched,
-           "sources": sources, "lang": lang}
+           "sources": sources, "lang": lang, "image": image_info,
+           "suggestions": _suggest_followups(route, lang)}
+
+
+def regenerate_stream(conversation_id: str, user: Dict) -> Iterator[Dict]:
+    """Remove the last assistant reply and re-answer the last user message."""
+    hist = db.get_history(conversation_id)
+    last_user = next((m for m in reversed(hist) if m["role"] == "user"), None)
+    last_bot = next((m for m in reversed(hist) if m["role"] == "assistant"), None)
+    if not last_user:
+        yield {"type": "error", "message": "nothing to regenerate yet"}
+        return
+    if last_bot:
+        db.delete_message(last_bot["id"])
+    yield from chat_stream(conversation_id, last_user["content"], user,
+                           skip_user_save=True,
+                           lang_override=last_user.get("lang"))
 
 
 # --------------------------------------------------------------------------- #
@@ -228,6 +327,27 @@ class TrainIn(BaseModel):
     steps: Optional[int] = None
 
 
+class MemoryIn(BaseModel):
+    kind: str
+    value: str
+
+    @field_validator("kind")
+    @classmethod
+    def kind_valid(cls, v: str) -> str:
+        allowed = {"name", "location", "likes", "dislikes", "work", "note"}
+        if v not in allowed:
+            raise ValueError(f"kind must be one of: {', '.join(sorted(allowed))}")
+        return v
+
+    @field_validator("value")
+    @classmethod
+    def value_valid(cls, v: str) -> str:
+        v = v.strip()
+        if not 1 <= len(v) <= 200:
+            raise ValueError("value must be 1-200 characters")
+        return v
+
+
 def build_stats() -> Dict:
     return {
         "database": db.stats(),
@@ -237,6 +357,10 @@ def build_stats() -> Dict:
         "retrain_threshold": config.RETRAIN_THRESHOLD,
         "feedback_policy": pipeline.retrain_feedback_quality(),
         "cloud_sync": sync.status(),
+        "datasets": datasets.status(),
+        "knowledge_index": knowledge.stats(),
+        "data_collection": datacol.stats(),
+        "checkpoints": __import__("app.checkpoints", fromlist=["stats"]).stats(),
     }
 
 
@@ -309,6 +433,23 @@ def model_info():
     return engine.engine.info()
 
 
+@app.get("/api/datasets")
+def dataset_registry():
+    """Long-term dataset memory: registry status + knowledge index stats."""
+    return {"datasets": datasets.status(), "knowledge_index": knowledge.stats()}
+
+
+@app.post("/api/datasets/{name}/refresh")
+def refresh_dataset(name: str):
+    """Re-download one registry dataset and rebuild the knowledge index."""
+    entry = next((e for e in datasets.REGISTRY if e["name"] == name), None)
+    if entry is None:
+        raise HTTPException(404, f"unknown dataset '{name}'")
+    info = datasets.ensure_one(entry)
+    knowledge.build_index()
+    return {"result": info, "knowledge_index": knowledge.stats()}
+
+
 @app.get("/api/conversations")
 def conversations(request: Request):
     user = require_user(request)
@@ -343,10 +484,39 @@ def chat(body: ChatIn, request: Request):
         raise HTTPException(400, "text is required")
     conv_id = _owned_conversation(user, body.conversation_id, title=text[:60])
     done: Dict = {}
-    for event in chat_stream(conv_id, text):
+    for event in chat_stream(conv_id, text, user):
         if event["type"] == "done":
             done = event
     return {"conversation_id": conv_id, **done}
+
+
+# --------------------------------------------------------------------------- #
+# Memory API (long-term user memory)
+# --------------------------------------------------------------------------- #
+@app.get("/api/memory")
+def get_memory(request: Request):
+    user = require_user(request)
+    return {"memories": memory.recall(user["id"], limit=100)}
+
+
+@app.post("/api/memory")
+def add_memory(body: MemoryIn, request: Request):
+    user = require_user(request)
+    ok = memory.remember(user["id"], body.kind, body.value, source="api")
+    if not ok:
+        return JSONResponse({"stored": False,
+                             "detail": "already known (or invalid kind)"},
+                            status_code=409)
+    return {"stored": True}
+
+
+@app.delete("/api/memory/{memory_id}")
+def delete_memory(memory_id: str, request: Request):
+    user = require_user(request)
+    ok = db.forget_user_memory(user["id"], memory_id)
+    if not ok:
+        raise HTTPException(404, "memory not found")
+    return {"forgotten": True}
 
 
 @app.post("/api/feedback")
@@ -367,6 +537,110 @@ def start_training(body: TrainIn, request: Request):
     steps = max(50, min(int(body.steps or config.AUTO_TRAIN_STEPS), 5000))
     ok = train.start_background(steps, trigger="manual")
     return {"started": ok, "steps": steps}
+
+
+@app.post("/api/finetune")
+def start_finetune(request: Request):
+    """Curated fine-tune: gentle low-LR pass on upvoted samples only."""
+    require_user(request)
+    if train.is_running():
+        return JSONResponse({"started": False, "detail": "training already in progress"},
+                            status_code=409)
+    ok = train.start_finetune()
+    if not ok:
+        return JSONResponse({"started": False,
+                             "detail": "no curated (upvoted 👍) samples yet — "
+                                       "vote on answers to build a fine-tune set"},
+                            status_code=409)
+    return {"started": True, "steps": config.FINETUNE_STEPS,
+            "lr": config.FINETUNE_LR}
+
+
+# --------------------------------------------------------------------------- #
+# Model versions (checkpoint registry)
+# --------------------------------------------------------------------------- #
+@app.get("/api/model/versions")
+def model_versions(request: Request):
+    require_user(request)
+    from app import checkpoints
+    return {"versions": checkpoints.list_checkpoints(), "stats": checkpoints.stats()}
+
+
+@app.post("/api/model/rollback")
+def model_rollback(request: Request, body: Dict = None):
+    require_user(request)
+    from app import checkpoints
+    ckpt_id = (body or {}).get("id") if isinstance(body, dict) else None
+    target = checkpoints.rollback(ckpt_id)
+    if target is None:
+        raise HTTPException(404, "no checkpoint to roll back to")
+    return {"rolled_back_to": target["id"], "loss_after": target["loss_after"]}
+
+
+# --------------------------------------------------------------------------- #
+# System prompt (transparency — official AIs publish their system prompts)
+# --------------------------------------------------------------------------- #
+@app.get("/api/system-prompt")
+def get_system_prompt(request: Request):
+    user = require_user(request)
+    lang = user.get("lang", config.DEFAULT_LANG)
+    return system_prompt.inspect(user, lang,
+                                 memory_block=memory.recall_text(user["id"]))
+
+
+# --------------------------------------------------------------------------- #
+# Data collection & dataset export
+# --------------------------------------------------------------------------- #
+@app.get("/api/data/stats")
+def data_stats(request: Request):
+    require_user(request)
+    return datacol.stats()
+
+
+@app.post("/api/data/export")
+def data_export(request: Request):
+    """Export the collected chat dataset as JSONL (official-style dataset file)."""
+    require_user(request)
+    return datacol.export_jsonl()
+
+
+@app.get("/api/data/export/latest")
+def data_export_latest(request: Request):
+    """Download the most recent exported dataset file."""
+    require_user(request)
+    from fastapi.responses import FileResponse
+    path = datacol.latest_export()
+    if path is None:
+        raise HTTPException(404, "no export yet — POST /api/data/export first")
+    return FileResponse(path, filename=path.name, media_type="application/x-ndjson")
+
+
+@app.post("/api/chat/{conversation_id}/stop")
+def stop_chat(conversation_id: str, request: Request):
+    """Stop an in-flight generation for this conversation (like ChatGPT's ⏹)."""
+    user = require_user(request)
+    conv = db.get_conversation(conversation_id)
+    if conv is None or conv.get("user_id") != user["id"]:
+        raise HTTPException(403, "this conversation belongs to another user")
+    ev = _ACTIVE_STOPS.get(conversation_id)
+    if ev:
+        ev.set()
+        return {"stopped": True}
+    return {"stopped": False}
+
+
+@app.post("/api/chat/{conversation_id}/regenerate")
+def regenerate(conversation_id: str, request: Request):
+    """Re-answer the last user message (ChatGPT-style ↻)."""
+    user = require_user(request)
+    conv = db.get_conversation(conversation_id)
+    if conv is None or conv.get("user_id") != user["id"]:
+        raise HTTPException(403, "this conversation belongs to another user")
+    done: Dict = {}
+    for event in regenerate_stream(conversation_id, user):
+        if event["type"] == "done":
+            done = event
+    return {"conversation_id": conversation_id, **done}
 
 
 # --------------------------------------------------------------------------- #
@@ -413,6 +687,13 @@ async def websocket_endpoint(ws: WebSocket):
                                     "text": f"☁ recovered {result.get('conversations', 0)} chats / "
                                             f"{result.get('messages', 0)} messages from the cloud"})
                 continue
+            if mtype == "stop":
+                cid = msg.get("conversation_id")
+                ev = _ACTIVE_STOPS.get(cid or "")
+                if ev:
+                    ev.set()
+                    await ws.send_json({"type": "notice", "text": "⏹ stopped"})
+                continue
             if mtype != "chat":
                 continue
             text = (msg.get("text") or "").strip()
@@ -424,13 +705,28 @@ async def websocket_endpoint(ws: WebSocket):
             except HTTPException as exc:
                 await ws.send_json({"type": "error", "message": exc.detail})
                 continue
-            async for event in iterate_in_threadpool(chat_stream(conv_id, text)):
+            async for event in iterate_in_threadpool(chat_stream(conv_id, text, user)):
                 await ws.send_json(event)
     except Exception as exc:  # keep the socket protocol friendly on errors
         try:
             await ws.send_json({"type": "error", "message": str(exc)})
         except Exception:
             pass
+
+
+# --------------------------------------------------------------------------- #
+# Generated images (cached on disk by app/imagegen.py)
+# --------------------------------------------------------------------------- #
+from fastapi.responses import FileResponse
+
+
+@app.get("/images/{fname}")
+def get_image(fname: str):
+    path = imagegen.serve_path(fname)
+    if path is None:
+        raise HTTPException(404, "image not found")
+    media = "image/svg+xml" if fname.endswith(".svg") else "image/png"
+    return FileResponse(path, media_type=media)
 
 
 # --------------------------------------------------------------------------- #

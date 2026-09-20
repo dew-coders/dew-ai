@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Dict, List, Optional
 
-from app import config, database as db
+from app import config, database as db, datasets
 from app.supabase_client import SupabaseError, client as supabase
 
 _LOCK = threading.Lock()
@@ -64,8 +64,29 @@ def _safe_pending() -> int:
 # --------------------------------------------------------------------------- #
 # Background push loop
 # --------------------------------------------------------------------------- #
+def _push_dataset_registry() -> None:
+    """Mirror the dataset registry status to Supabase (long-term memory in cloud)."""
+    try:
+        rows = []
+        for d in datasets.status():
+            if not d["enabled"]:
+                continue
+            rows.append({
+                "name": d["name"], "hf_id": d["hf_id"], "kind": d["kind"],
+                "rows": d["rows"],
+                "updated_at": d["updated_at"],
+            })
+        if rows:
+            ok, err = supabase.upsert("registered_datasets", rows, conflict="name")
+            if not ok:
+                _set_error(f"dataset registry push failed: {err}")
+    except Exception as exc:
+        _set_error(f"dataset registry push failed: {type(exc).__name__}: {exc}")
+
+
 def _worker() -> None:
     print(f"[sync] worker started → {config.SUPABASE_URL}", flush=True)
+    _push_dataset_registry()
     idle_rounds = 0
     while True:
         batch = []
@@ -127,10 +148,10 @@ def _set_error(msg: str) -> None:
 # Recovery (chat history restore from the cloud)
 # --------------------------------------------------------------------------- #
 def recover_from_cloud(user: Dict) -> Dict:
-    """Pull the user's conversations and messages from Supabase into SQLite.
-    Only inserts rows that don't exist locally, so it is safe to run anytime."""
+    """Pull the user's conversations, messages and memories from Supabase into
+    SQLite. Only inserts rows that don't exist locally (idempotent)."""
     result: Dict[str, object] = {"enabled": bool(_state["enabled"]),
-                                 "conversations": 0, "messages": 0}
+                                 "conversations": 0, "messages": 0, "memories": 0}
     if not _state["enabled"]:
         result["error"] = "cloud sync disabled"
         return result
@@ -157,6 +178,21 @@ def recover_from_cloud(user: Dict) -> Dict:
                 result["messages"] = int(result["messages"]) + len(fresh)
             elif existing is None:
                 result["conversations"] = int(result["conversations"]) + 1
+        # long-term memories (facts about the user)
+        try:
+            known_mem = {m["id"] for m in db.get_user_memory(user["id"], limit=500)}
+            mems = supabase.select("user_memory",
+                                   filters={"user_id": f"eq.{db.to_cloud_uuid(user['id'])}"},
+                                   order="created_at.desc", limit=200)
+            fresh = [m for m in mems if db.to_local_id(m["id"]) not in known_mem]
+            for m in fresh:
+                db.add_memory_from_cloud(user["id"], {
+                    **m, "id": db.to_local_id(m["id"]),
+                    "user_id": db.to_local_id(m["user_id"])})
+            result["memories"] = len(fresh)
+        except SupabaseError:
+            pass  # table not migrated yet — non-fatal
+
         with _LOCK:
             _state["last_recovery"] = time.strftime("%H:%M:%S")
         return result

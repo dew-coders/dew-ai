@@ -49,6 +49,16 @@ create table if not exists public.training_samples (
     created_at  timestamptz not null default now()
 );
 
+-- ------------------------------------------------- registered_datasets -----
+create table if not exists public.registered_datasets (
+    name        text primary key,
+    hf_id       text not null,
+    kind        text,
+    rows        integer default 0,
+    updated_at  timestamptz,
+    synced_at   timestamptz not null default now()
+);
+
 -- ------------------------------------------------------------- indexes -----
 create index if not exists idx_cloud_conversations_user  on public.conversations(user_id);
 create index if not exists idx_cloud_messages_conv       on public.messages(conversation_id);
@@ -63,13 +73,16 @@ alter table public.users             enable row level security;
 alter table public.conversations     enable row level security;
 alter table public.messages          enable row level security;
 alter table public.training_samples  enable row level security;
+alter table public.registered_datasets enable row level security;
 
 drop policy if exists "neurochat_anon_users"             on public.users;
 drop policy if exists "neurochat_anon_conversations"     on public.conversations;
 drop policy if exists "neurochat_anon_messages"          on public.messages;
 drop policy if exists "neurochat_anon_training_samples"  on public.training_samples;
+drop policy if exists "neurochat_anon_registered_datasets" on public.registered_datasets;
 
 create policy "neurochat_anon_users"             on public.users             for all to anon using (true) with check (true);
 create policy "neurochat_anon_conversations"     on public.conversations     for all to anon using (true) with check (true);
 create policy "neurochat_anon_messages"          on public.messages          for all to anon using (true) with check (true);
 create policy "neurochat_anon_training_samples"  on public.training_samples  for all to anon using (true) with check (true);
+create policy "neurochat_anon_registered_datasets" on public.registered_datasets for all to anon using (true) with check (true);

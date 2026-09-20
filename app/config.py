@@ -29,17 +29,27 @@ DB_PATH = DATA_DIR / "chat.db"
 WEIGHTS_PATH = DATA_DIR / "model_weights.npz"
 VOCAB_PATH = DATA_DIR / "vocab.json"
 SEED_CORPUS_PATH = DATA_DIR / "seed_corpus.txt"
+SINHALA_CORPUS_PATH = DATA_DIR / "sinhala_corpus.txt"
 TRAIN_TEXT_PATH = DATA_DIR / "train.txt"
+
+# Model version registry (official-AI-style checkpointing)
+CHECKPOINTS_DIR = DATA_DIR / "checkpoints"
+CHECKPOINT_KEEP = int(os.environ.get("CHECKPOINT_KEEP", "8"))  # versions kept on disk
+
+# Exported training data (JSONL) lands here
+EXPORTS_DIR = DATA_DIR / "exports"
 
 # Make sure the data directory exists (weights/db/datasets live here).
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ----------------------------- Model architecture --------------------------
-CONTEXT_LEN = 192      # characters of context the model can see
-D_MODEL = 128          # embedding / residual width
-N_LAYERS = 3           # transformer blocks
-N_HEADS = 4            # attention heads per block
-D_FF = 512             # feed-forward hidden width
+# Scaled-up GPT-style configuration (~2.7M params): wider residual stream,
+# more layers and a longer context so the model can absorb the dataset memory.
+CONTEXT_LEN = 256      # characters of context the model can see
+D_MODEL = 256          # embedding / residual width
+N_LAYERS = 4           # transformer blocks
+N_HEADS = 8            # attention heads per block
+D_FF = 768             # feed-forward hidden width
 
 # ----------------------------- Training ------------------------------------
 LEARNING_RATE = 3e-3
@@ -52,11 +62,17 @@ INITIAL_TRAIN_STEPS = 600   # bootstrap training run on the seed corpus
 AUTO_TRAIN_STEPS = 300      # steps for automatic continuous-learning runs
 RETRAIN_THRESHOLD = 15      # new collected samples before auto-retrain fires
 
+# Fine-tuning: gentler LR + fewer steps, only on high-quality curated samples
+FINETUNE_STEPS = 200
+FINETUNE_LR = 5e-4          # ~6x lower than base LR to avoid forgetting
+FINETUNE_MIN_QUALITY = 1    # only upvoted / curated samples
+
 # ----------------------------- Generation ----------------------------------
 TEMPERATURE = 0.85
 TOP_K = 40
 TOP_P = 0.92
 MAX_NEW_TOKENS = 220
+REPETITION_PENALTY = 1.15          # >1 dampens tokens seen in the last 64 chars
 LOW_CONFIDENCE_THRESHOLD = 0.30   # below this the bot prefers search/templates
 
 # ----------------------------- Supabase (cloud database) --------------------

@@ -323,4 +323,15 @@ def load_weights(path: Path | None = None) -> Params | None:
     if not path.exists():
         return None
     with np.load(path) as z:
+        meta = z["__meta__"].tolist() if "__meta__" in z.files else None
+        # Architecture check: if the checkpoint was trained with a different
+        # model size (vocab/arch change), discard it so training re-initializes
+        # cleanly instead of crashing on shape mismatches.
+        if meta is not None:
+            expected = [config.D_MODEL, config.N_LAYERS, config.N_HEADS,
+                        config.CONTEXT_LEN]
+            if list(meta[1:]) != expected:
+                print(f"[model] checkpoint architecture {meta[1:]} != current "
+                      f"{expected} — starting fresh", flush=True)
+                return None
         return {k: z[k].astype(np.float32) for k in z.files if k != "__meta__"}

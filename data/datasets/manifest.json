@@ -1,0 +1,28 @@
+{
+  "datasets": {
+    "sinhala-asr-1000": {
+      "hf_id": "Ransaka/SinhalaASR-1000",
+      "kind": "asr",
+      "rows": 1000,
+      "text_field": "sentence",
+      "raw_file": "sinhala-asr-1000.jsonl",
+      "corpus_file": "sinhala-asr-1000.txt",
+      "raw_sha256": "210435165bddacc644e98926c1f0034b7e5fefe8520ac674c79b1934ccdb1bfc",
+      "corpus_sha256": "3fccdd786f635efd99c106e77182953f28e6f6b7389c4232ae9e78abbe7a16f9",
+      "updated_at": "2026-09-20 14:16:58",
+      "last_verified": "2026-09-20 14:16:58"
+    },
+    "sinhala-news-24k": {
+      "hf_id": "NLPC-UOM/Sinhala-News-Source-classification",
+      "kind": "news",
+      "rows": 1000,
+      "text_field": "comment",
+      "raw_file": "sinhala-news-24k.jsonl",
+      "corpus_file": "sinhala-news-24k.txt",
+      "raw_sha256": "82981b3eba3afa9c112c9dfb272c0e7140e8daae6aac3c337d54eda718f0c657",
+      "corpus_sha256": "be7c55c30a8f5fe0da2cc1f3b38daaa18cbe34311da3ceee218f9335873e82ac",
+      "updated_at": "2026-09-20 14:20:50",
+      "last_verified": "2026-09-20 14:20:50"
+    }
+  }
+}

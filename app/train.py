@@ -12,11 +12,12 @@ from __future__ import annotations
 import threading
 import time
 import traceback
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from app import config, database as db, model
+from app import config, database as db, datasets, model
 from app.tokenizer import CharTokenizer
 
 _TRAIN_GATE = threading.Lock()   # only one training run at a time
@@ -44,6 +45,13 @@ def build_training_text() -> Tuple[str, int, int]:
     parts: List[str] = []
     if config.SEED_CORPUS_PATH.exists():
         parts.append(config.SEED_CORPUS_PATH.read_text(encoding="utf-8"))
+    # Long-term dataset memory: every registered dataset corpus is included on
+    # every (re)train — deleting the weights never loses the datasets.
+    for path in datasets.corpus_paths():
+        try:
+            parts.append(Path(path).read_text(encoding="utf-8"))
+        except OSError:
+            continue
 
     samples = db.get_training_samples(exclude_negative=True)
     cutoff = db.last_completed_run_cutoff()
@@ -67,8 +75,12 @@ def build_training_text() -> Tuple[str, int, int]:
 # --------------------------------------------------------------------------- #
 # Training loop
 # --------------------------------------------------------------------------- #
-def run_training(steps: int, trigger: str = "manual") -> int:
-    """Blocking training run. Returns the run id. Use start_background() for async."""
+def run_training(steps: int, trigger: str = "manual",
+                 finetune: bool = False, finetune_text: str = "") -> int:
+    """Blocking training run. Returns the run id. Use start_background() for async.
+
+    finetune=True: gentle low-LR pass on curated data only (finetune_text),
+    keeping existing weights (ChatGPT-style fine-tuning instead of re-training)."""
     if not _TRAIN_GATE.acquire(blocking=False):
         raise RuntimeError("A training run is already in progress")
 
@@ -78,7 +90,12 @@ def run_training(steps: int, trigger: str = "manual") -> int:
         state.update(running=True, progress="building-dataset", last_message="")
         run_id = db.start_training_run(trigger, steps)
 
-        text, n_samples, cutoff_created = build_training_text()
+        if finetune:
+            text = finetune_text
+            n_samples = 0
+            cutoff_created = ""
+        else:
+            text, n_samples, cutoff_created = build_training_text()
         data_stream = text[-600_000:] if len(text) > 600_000 else text
 
         # Vocabulary: reuse the saved one so existing weights stay compatible.
@@ -90,13 +107,16 @@ def run_training(steps: int, trigger: str = "manual") -> int:
         if params is None:
             params = model.init_params(tok.vocab_size)
             state["progress"] = "training (from scratch)"
+        elif finetune:
+            state["progress"] = "fine-tuning (low LR)"
 
         data = np.array(tok.encode(data_stream), dtype=np.int64)
         if data.size < config.CONTEXT_LEN + 2:
             raise RuntimeError("Not enough data to train on")
 
         rng = np.random.default_rng(1234)
-        adam = model.Adam(params, lr=config.LEARNING_RATE)
+        base_lr = config.FINETUNE_LR if finetune else config.LEARNING_RATE
+        adam = model.Adam(params, lr=base_lr)
         losses: List[float] = []
         CHUNK = 40          # steps per model-lock hold, keeps chat responsive
         t0 = time.time()
@@ -115,7 +135,8 @@ def run_training(steps: int, trigger: str = "manual") -> int:
             y = np.stack([data[s + 1:s + 1 + config.CONTEXT_LEN] for s in starts])
 
             loss, grads = model.loss_and_grads(params, x, y)
-            adam.step(params, grads, lr=model.lr_at(step))
+            step_lr = model.lr_at(step) if not finetune else base_lr
+            adam.step(params, grads, lr=step_lr)
             losses.append(loss)
 
             if step % 25 == 0 or step == steps - 1:
@@ -136,6 +157,13 @@ def run_training(steps: int, trigger: str = "manual") -> int:
         db.finish_training_run(run_id, "done", n_samples, 0,
                                loss_before, loss_after)
         db.mark_samples_used(cutoff_created)
+        # Model version registry: snapshot this run as a rollback-able version.
+        try:
+            from app import checkpoints
+            checkpoints.save_checkpoint(model.param_count(params), run_id, trigger,
+                                        steps, loss_before, loss_after, n_samples)
+        except Exception as exc:  # noqa: BLE001 — never fail a run on housekeeping
+            print(f"[train:{trigger}] checkpoint skipped: {exc}", flush=True)
         state.update(progress="done",
                      last_message=f"done in {time.time() - t0:.1f}s — "
                                   f"loss {loss_before:.3f} → {loss_after:.3f}")
@@ -158,19 +186,36 @@ def run_training(steps: int, trigger: str = "manual") -> int:
         _TRAIN_GATE.release()
 
 
-def start_background(steps: int, trigger: str = "auto") -> bool:
+def start_background(steps: int, trigger: str = "auto",
+                     finetune: bool = False, finetune_text: str = "") -> bool:
     """Kick off a training run in a daemon thread. Returns False if busy."""
     if is_running():
         return False
 
     def _runner():
         try:
-            run_training(steps, trigger)
+            run_training(steps, trigger, finetune=finetune,
+                         finetune_text=finetune_text)
         except Exception as exc:  # already recorded in DB
             print(f"[train:{trigger}] background run failed: {exc}", flush=True)
 
     threading.Thread(target=_runner, name=f"trainer-{trigger}", daemon=True).start()
     return True
+
+
+def start_finetune() -> bool:
+    """Fine-tune on curated (upvoted + remembered-note) samples only."""
+    if is_running():
+        return False
+    curated = [s for s in db.get_training_samples(exclude_negative=True)
+               if s.get("quality", 0) >= config.FINETUNE_MIN_QUALITY]
+    if not curated:
+        return False
+    parts = [f"User: {s['prompt']}\nBot: {s['response']}\n\n" for s in curated]
+    # repeat the small curated set so the pass has enough steps of signal
+    text = "".join(parts) * max(1, config.FINETUNE_STEPS // 10)
+    return start_background(config.FINETUNE_STEPS, trigger="finetune",
+                            finetune=True, finetune_text=text)
 
 
 # --------------------------------------------------------------------------- #

@@ -16,9 +16,16 @@ STOP_SUFFIXES = ("\n\n", "\nUser", "\nuser", "\nBot", "\nbot")
 
 
 def _sample_next(logits: np.ndarray, temperature: float, top_k: int,
-                 top_p: float, rng: np.random.Generator):
-    """Returns (token_id, probability) sampled with temperature / top-k / top-p."""
+                 top_p: float, rng: np.random.Generator,
+                 recent_ids: list | None = None,
+                 rep_penalty: float | None = None):
+    """Returns (token_id, probability) sampled with temperature / top-k / top-p
+    and a repetition penalty over recently produced tokens (official-style
+    decoding: keeps long generations on-topic without breaking rare chars)."""
     logits = logits.astype(np.float64) / max(1e-6, temperature)
+    if recent_ids and rep_penalty and rep_penalty > 1.0:
+        uniq, counts = np.unique(np.asarray(list(recent_ids[-64:])), return_counts=True)
+        logits[uniq] /= (rep_penalty ** np.minimum(counts, 4.0))
     if top_k and 0 < top_k < logits.size:
         kth = np.sort(logits)[-top_k]
         logits[logits < kth] = -1e9
@@ -57,11 +64,14 @@ def _loop(params, tok: CharTokenizer, prompt: str, max_new: int, temperature: fl
     """Shared generation loop: yields (char, prob) one at a time."""
     ids = tok.encode(prompt)[-config.CONTEXT_LEN:]
     produced = 0
+    recent: list = []
     for _ in range(max_new):
         window = np.array([ids[-config.CONTEXT_LEN:]], dtype=np.int64)
         logits, _ = model.forward(params, window)
-        idx, prob = _sample_next(logits[0, -1], temperature, top_k, top_p, rng)
+        idx, prob = _sample_next(logits[0, -1], temperature, top_k, top_p, rng,
+                                 recent_ids=recent, rep_penalty=config.REPETITION_PENALTY)
         ids.append(idx)
+        recent.append(idx)
         yield tok.itos[idx], prob
         produced += 1
         if produced >= max_new:

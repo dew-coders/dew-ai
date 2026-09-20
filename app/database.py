@@ -126,6 +126,15 @@ CREATE TABLE IF NOT EXISTS training_runs (
     created_at     TEXT NOT NULL,
     finished_at    TEXT
 );
+CREATE TABLE IF NOT EXISTS user_memory (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id),
+    kind        TEXT NOT NULL,              -- name | location | likes | …
+    value       TEXT NOT NULL,
+    source      TEXT DEFAULT 'user',
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_user ON user_memory(user_id);
 CREATE TABLE IF NOT EXISTS sync_outbox (
     seq        INTEGER PRIMARY KEY AUTOINCREMENT,
     tbl        TEXT NOT NULL,               -- users | conversations | messages | training_samples
@@ -310,6 +319,16 @@ def get_conversation(conversation_id: str) -> Optional[Dict]:
     return dict(row) if row else None
 
 
+def update_conversation_title(conversation_id: str, title: str) -> None:
+    """Auto-title: first user message names the conversation (ChatGPT-style)."""
+    with _LOCK, _connect() as conn:
+        conn.execute("UPDATE conversations SET title = ? WHERE id = ?",
+                     (title[:80], conversation_id))
+        conn.execute("INSERT INTO sync_outbox (tbl, row_id, created_at)"
+                     " VALUES ('conversations', ?, ?)",
+                     (conversation_id, _now()))
+
+
 def add_message(conversation_id: str, role: str, content: str,
                 source: Optional[str] = None, confidence: Optional[float] = None,
                 lang: str = "en") -> str:
@@ -330,6 +349,16 @@ def get_history(conversation_id: str, limit: int = 200) -> List[Dict]:
             "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at, id LIMIT ?",
             (conversation_id, limit)).fetchall()
     return [dict(r) for r in rows]
+
+
+def delete_message(message_id: str) -> bool:
+    """Remove one message and its feedback (used by regenerate)."""
+    with _LOCK, _connect() as conn:
+        cur = conn.execute("DELETE FROM messages WHERE id = ? AND role = 'assistant'",
+                           (message_id,))
+        if cur.rowcount:
+            conn.execute("DELETE FROM feedback WHERE message_id = ?", (message_id,))
+        return bool(cur.rowcount)
 
 
 def get_recent_messages(conversation_id: str, n: int = 6) -> List[Dict]:
@@ -374,13 +403,18 @@ def add_training_sample(prompt: str, response: str, source: str,
     return sid
 
 
-def get_training_samples(exclude_negative: bool = True) -> List[Dict]:
+def get_training_samples(exclude_negative: bool = True,
+                         limit: Optional[int] = None) -> List[Dict]:
     query = "SELECT * FROM training_samples"
     if exclude_negative:
         query += " WHERE quality >= 0"
     query += " ORDER BY created_at, id"
+    params: tuple = ()
+    if limit:
+        query += " LIMIT ?"
+        params = (int(limit),)
     with _connect() as conn:
-        rows = conn.execute(query).fetchall()
+        rows = conn.execute(query, params).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -515,6 +549,8 @@ def row_for_cloud(tbl: str, row_id: str) -> Optional[Dict]:
             row = conn.execute(
                 "SELECT id, username, lang, created_at, last_seen FROM users"
                 " WHERE id = ?", (row_id,)).fetchone()
+        elif tbl == "user_memory":
+            row = row_for_cloud_memory(row_id)
         elif tbl == "conversations":
             row = conn.execute(
                 "SELECT id, user_id, title, lang, created_at FROM conversations"
@@ -535,6 +571,66 @@ def row_for_cloud(tbl: str, row_id: str) -> Optional[Dict]:
     for key in ("id", "user_id", "conversation_id"):
         if key in out:
             out[key] = cid(out[key])
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Long-term user memory
+# --------------------------------------------------------------------------- #
+def add_user_memory(user_id: str, kind: str, value: str, source: str = "user") -> bool:
+    """Store a fact. Singleton kinds (name/location/work) replace the old
+    value; duplicates return False."""
+    with _LOCK, _connect() as conn:
+        row = conn.execute(
+            "SELECT id, value FROM user_memory WHERE user_id = ? AND kind = ?",
+            (user_id, kind)).fetchone()
+        if row is not None:
+            if row["value"].lower() == value.lower():
+                return False
+            if kind in ("name", "location", "work"):   # facts that update
+                conn.execute("DELETE FROM user_memory WHERE id = ?", (row["id"],))
+            else:
+                return False
+        mid = new_id()
+        conn.execute(
+            "INSERT INTO user_memory (id, user_id, kind, value, source, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)", (mid, user_id, kind, value, source, _now()))
+        conn.execute("INSERT INTO sync_outbox (tbl, row_id, created_at) VALUES ('user_memory', ?, ?)",
+                     (mid, _now()))
+    return True
+
+
+def get_user_memory(user_id: str, kind: Optional[str] = None,
+                    limit: int = 50) -> List[Dict]:
+    with _connect() as conn:
+        if kind:
+            rows = conn.execute(
+                "SELECT * FROM user_memory WHERE user_id = ? AND kind = ?"
+                " ORDER BY created_at DESC LIMIT ?", (user_id, kind, limit)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM user_memory WHERE user_id = ?"
+                " ORDER BY created_at DESC LIMIT ?", (user_id, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def forget_user_memory(user_id: str, memory_id: str) -> bool:
+    with _LOCK, _connect() as conn:
+        cur = conn.execute("DELETE FROM user_memory WHERE id = ? AND user_id = ?",
+                           (memory_id, user_id))
+    return cur.rowcount > 0
+
+
+def row_for_cloud_memory(memory_id: str) -> Optional[Dict]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, user_id, kind, value, source, created_at FROM user_memory"
+            " WHERE id = ?", (memory_id,)).fetchone()
+    if not row:
+        return None
+    out = dict(row)
+    for key in ("id", "user_id"):
+        out[key] = to_cloud_uuid(out[key])
     return out
 
 
@@ -561,6 +657,15 @@ def add_message_from_cloud(conversation_id: str, m: Dict) -> None:
             (to_local_id(m["id"]), conversation_id, m.get("role") or "assistant",
              m.get("content") or "", m.get("source"), m.get("confidence"),
              m.get("lang") or "en", _norm_ts(m.get("created_at"))))
+
+
+def add_memory_from_cloud(user_id: str, m: Dict) -> None:
+    with _LOCK, _connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO user_memory (id, user_id, kind, value, source, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (m["id"], user_id, m.get("kind") or "note", m.get("value") or "",
+             m.get("source") or "cloud", _norm_ts(m.get("created_at"))))
 
 
 # --------------------------------------------------------------------------- #

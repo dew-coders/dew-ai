@@ -8,6 +8,7 @@ const typingEl = $("#typing");
 const typingLabel = $("#typingLabel");
 const inputEl = $("#input");
 const sendBtn = $("#sendBtn");
+const stopBtn = $("#stopBtn");
 const connDot = $("#connDot");
 const modelBadge = $("#modelBadge");
 const noticeBar = $("#noticeBar");
@@ -27,6 +28,7 @@ let conversationId = null;       // uuid string now
 let currentBot = null;           // streaming target {wrap, bubble, parts}
 let reconnectTimer = null;
 let pollTimer = null;
+let generating = false;          // true between send and done (⏹ stop support)
 
 /* ------------------------------------------------------------------ */
 /* i18n — UI strings per language                                      */
@@ -34,20 +36,21 @@ let pollTimer = null;
 const UI_STRINGS = {
   en: {
     tagline: "a neural network built from scratch — it learns from every chat",
-    loginTitle: "NeuroChat", loginSub: "Enter a username to start chatting — no password needed.",
+    loginTitle: "Dew AI", loginSub: "Enter a username to start chatting — no password needed.",
     loginBtn: "Log in", loginHint: "Your chats are saved to the cloud, so you can recover them anytime on any device.",
     chatsBtn: "💬 Chats", statsBtn: "Stats", trainBtn: "Train now", logoutBtn: "Log out",
     chatsTitle: "Your chats", newChatBtn: "＋ New chat", recoverBtn: "☁ Recover",
     placeholder: "Say something…  (or try: search: latest AI news)",
     thinking: "thinking…", searching: "searching the web…", generating: "generating with my neural net…",
     send: "Send", noChats: "No chats yet — say hello!",
+    stop: "⏹", regen: "↻", copy: "⧉", copied: "Copied!",
     recoverDone: "☁ Recovered {c} chat(s) / {m} messages from the cloud.",
     recoverOff: "☁ Cloud sync is not enabled — set SUPABASE_URL/KEY in .env.",
     loginFailed: "Login failed — try another username.",
   },
   es: {
     tagline: "una red neuronal hecha desde cero — aprende con cada chat",
-    loginTitle: "NeuroChat", loginSub: "Escribe un usuario para empezar — sin contraseña.",
+    loginTitle: "Dew AI", loginSub: "Escribe un usuario para empezar — sin contraseña.",
     loginBtn: "Entrar", loginHint: "Tus chats se guardan en la nube: recupéralos cuando quieras, en cualquier dispositivo.",
     chatsBtn: "💬 Chats", statsBtn: "Stats", trainBtn: "Entrenar", logoutBtn: "Salir",
     chatsTitle: "Tus chats", newChatBtn: "＋ Nuevo chat", recoverBtn: "☁ Recuperar",
@@ -60,7 +63,7 @@ const UI_STRINGS = {
   },
   fr: {
     tagline: "un réseau de neurones fait from scratch — il apprend à chaque chat",
-    loginTitle: "NeuroChat", loginSub: "Entre un pseudo pour discuter — sans mot de passe.",
+    loginTitle: "Dew AI", loginSub: "Entre un pseudo pour discuter — sans mot de passe.",
     loginBtn: "Se connecter", loginHint: "Tes chats sont sauvegardés dans le cloud : récupère-les à tout moment, sur n'importe quel appareil.",
     chatsBtn: "💬 Chats", statsBtn: "Stats", trainBtn: "Entraîner", logoutBtn: "Déconnexion",
     chatsTitle: "Tes chats", newChatBtn: "＋ Nouveau chat", recoverBtn: "☁ Récupérer",
@@ -73,7 +76,7 @@ const UI_STRINGS = {
   },
   de: {
     tagline: "ein von Hand gebautes neuronales Netz — es lernt mit jedem Chat",
-    loginTitle: "NeuroChat", loginSub: "Gib einen Benutzernamen ein — kein Passwort nötig.",
+    loginTitle: "Dew AI", loginSub: "Gib einen Benutzernamen ein — kein Passwort nötig.",
     loginBtn: "Anmelden", loginHint: "Deine Chats werden in der Cloud gespeichert — jederzeit auf jedem Gerät wiederherstellbar.",
     chatsBtn: "💬 Chats", statsBtn: "Stats", trainBtn: "Trainieren", logoutBtn: "Abmelden",
     chatsTitle: "Deine Chats", newChatBtn: "＋ Neuer Chat", recoverBtn: "☁ Wiederherstellen",
@@ -86,7 +89,7 @@ const UI_STRINGS = {
   },
   it: {
     tagline: "una rete neurale scritta da zero — impara da ogni chat",
-    loginTitle: "NeuroChat", loginSub: "Inserisci un nome utente per iniziare — senza password.",
+    loginTitle: "Dew AI", loginSub: "Inserisci un nome utente per iniziare — senza password.",
     loginBtn: "Accedi", loginHint: "Le tue chat sono salvate nel cloud: recuperale quando vuoi, da qualsiasi dispositivo.",
     chatsBtn: "💬 Chat", statsBtn: "Stats", trainBtn: "Allena", logoutBtn: "Esci",
     chatsTitle: "Le tue chat", newChatBtn: "＋ Nuova chat", recoverBtn: "☁ Recupera",
@@ -99,7 +102,7 @@ const UI_STRINGS = {
   },
   pt: {
     tagline: "uma rede neural feita do zero — aprende a cada conversa",
-    loginTitle: "NeuroChat", loginSub: "Digite um usuário para começar — sem senha.",
+    loginTitle: "Dew AI", loginSub: "Digite um usuário para começar — sem senha.",
     loginBtn: "Entrar", loginHint: "Seus chats ficam salvos na nuvem: recupere quando quiser, em qualquer aparelho.",
     chatsBtn: "💬 Chats", statsBtn: "Stats", trainBtn: "Treinar", logoutBtn: "Sair",
     chatsTitle: "Seus chats", newChatBtn: "＋ Novo chat", recoverBtn: "☁ Recuperar",
@@ -112,7 +115,7 @@ const UI_STRINGS = {
   },
   ru: {
     tagline: "нейросеть, написанная с нуля — учится на каждом чате",
-    loginTitle: "NeuroChat", loginSub: "Введите имя пользователя — без пароля.",
+    loginTitle: "Dew AI", loginSub: "Введите имя пользователя — без пароля.",
     loginBtn: "Войти", loginHint: "Чаты сохраняются в облако — восстановите их в любой момент на любом устройстве.",
     chatsBtn: "💬 Чаты", statsBtn: "Статы", trainBtn: "Обучить", logoutBtn: "Выйти",
     chatsTitle: "Ваши чаты", newChatBtn: "＋ Новый чат", recoverBtn: "☁ Восстановить",
@@ -125,7 +128,7 @@ const UI_STRINGS = {
   },
   tr: {
     tagline: "sıfırdan yazılmış bir sinir ağı — her sohbette öğrenir",
-    loginTitle: "NeuroChat", loginSub: "Sohbete başlamak için bir kullanıcı adı gir — şifre gerekmez.",
+    loginTitle: "Dew AI", loginSub: "Sohbete başlamak için bir kullanıcı adı gir — şifre gerekmez.",
     loginBtn: "Giriş yap", loginHint: "Sohbetlerin buluta kaydedilir — istediğin zaman, her cihazdan geri yükleyebilirsin.",
     chatsBtn: "💬 Sohbetler", statsBtn: "İstatistik", trainBtn: "Eğit", logoutBtn: "Çıkış",
     chatsTitle: "Sohbetlerin", newChatBtn: "＋ Yeni sohbet", recoverBtn: "☁ Geri yükle",
@@ -138,7 +141,7 @@ const UI_STRINGS = {
   },
   ar: {
     tagline: "شبكة عصبية مبنية من الصفر — تتعلم من كل محادثة",
-    loginTitle: "NeuroChat", loginSub: "أدخل اسم مستخدم للبدء — بدون كلمة مرور.",
+    loginTitle: "Dew AI", loginSub: "أدخل اسم مستخدم للبدء — بدون كلمة مرور.",
     loginBtn: "دخول", loginHint: "محادثاتك محفوظة في السحابة — استعدها في أي وقت وعلى أي جهاز.",
     chatsBtn: "💬 محادثات", statsBtn: "إحصاءات", trainBtn: "تدريب", logoutBtn: "خروج",
     chatsTitle: "محادثاتك", newChatBtn: "＋ محادثة جديدة", recoverBtn: "☁ استعادة",
@@ -151,7 +154,7 @@ const UI_STRINGS = {
   },
   hi: {
     tagline: "शुरुआत से बना न्यूरल नेटवर्क — हर चैट से सीखता है",
-    loginTitle: "NeuroChat", loginSub: "शुरू करने के लिए यूज़रनेम लिखें — पासवर्ड की ज़रूरत नहीं।",
+    loginTitle: "Dew AI", loginSub: "शुरू करने के लिए यूज़रनेम लिखें — पासवर्ड की ज़रूरत नहीं।",
     loginBtn: "लॉग इन", loginHint: "आपकी चैट्स क्लाउड में सेव होती हैं — कभी भी, किसी भी डिवाइस पर वापस ला सकते हैं।",
     chatsBtn: "💬 चैट्स", statsBtn: "आँकड़े", trainBtn: "ट्रेन", logoutBtn: "लॉग आउट",
     chatsTitle: "आपकी चैट्स", newChatBtn: "＋ नई चैट", recoverBtn: "☁ रिकवर",
@@ -164,7 +167,7 @@ const UI_STRINGS = {
   },
   zh: {
     tagline: "一个从零开始构建的神经网络 — 它会从每次聊天中学习",
-    loginTitle: "NeuroChat", loginSub: "输入用户名即可开始聊天 — 无需密码。",
+    loginTitle: "Dew AI", loginSub: "输入用户名即可开始聊天 — 无需密码。",
     loginBtn: "登录", loginHint: "你的聊天记录保存在云端，随时可以在任何设备上恢复。",
     chatsBtn: "💬 聊天", statsBtn: "统计", trainBtn: "训练", logoutBtn: "退出",
     chatsTitle: "你的聊天", newChatBtn: "＋ 新聊天", recoverBtn: "☁ 恢复",
@@ -177,7 +180,7 @@ const UI_STRINGS = {
   },
   ja: {
     tagline: "ゼロから作ったニューラルネット — おしゃべりするたびに学習する",
-    loginTitle: "NeuroChat", loginSub: "ユーザー名を入力して開始 — パスワードは不要。",
+    loginTitle: "Dew AI", loginSub: "ユーザー名を入力して開始 — パスワードは不要。",
     loginBtn: "ログイン", loginHint: "チャットはクラウドに保存されるので、いつでもどの端末でも復元できるよ。",
     chatsBtn: "💬 チャット", statsBtn: "統計", trainBtn: "訓練", logoutBtn: "ログアウト",
     chatsTitle: "チャット一覧", newChatBtn: "＋ 新しいチャット", recoverBtn: "☁ 復元",
@@ -188,9 +191,22 @@ const UI_STRINGS = {
     recoverOff: "☁ クラウド同期が無効 — .env に SUPABASE_URL/KEY を設定してね。",
     loginFailed: "ログイン失敗 — 別の名前で試して。",
   },
+  si: {
+    tagline: "සම්පූර්ණයෙන් හදපු නියුරල් ජාලයක් — හැම කතාවකින්ම ඉගෙන ගන්නවා",
+    loginTitle: "Dew AI", loginSub: "පටන් ගන්න පරිශීලක නාමයක් ලියන්න — මුරපදයක් අවශ්‍ය නෑ.",
+    loginBtn: "ඇතුල් වන්න", loginHint: "ඔයාගේ කතාබහ වලාවේ save වෙනවා — ඕනෑම වෙලාවක නැවත ලබාගන්න පුළුවන්.",
+    chatsBtn: "💬 කතාබහ", statsBtn: "සංඛ්‍යාලේඛන", trainBtn: "පුහුණු", logoutBtn: "ඉවත් වන්න",
+    chatsTitle: "ඔයාගේ කතාබහ", newChatBtn: "＋ අලුත් කතාබහ", recoverBtn: "☁ නැවත ලබාගන්න",
+    placeholder: "මොකක් හරි කියන්න…  (නැත්නම්: සොයන්න: AI පුවත්)",
+    thinking: "හිතනවා…", searching: "අන්තර්ජාලයේ සොයනවා…", generating: "නියුරල් ජාලයෙන් ලියනවා…",
+    send: "යවන්න", noChats: "තාම කතාබහ නෑ — ආයුබෝවන් කියන්න!",
+    recoverDone: "☁ වලාවෙන් කතාබහ {c}ක් / පණිවිඩ {m}ක් නැවත ලබාගත්තා.",
+    recoverOff: "☁ වලාකුළු සම්මුහ කිරීම අක්‍රීයයි — .env වල SUPABASE_URL/KEY දාන්න.",
+    loginFailed: "ඇතුල් වීම අසාර්ථක — වෙනත් නමක් උත්සාහ කරන්න.",
+  },
   ko: {
     tagline: "처음부터 직접 만든 신경망 — every 채팅에서 배워요",
-    loginTitle: "NeuroChat", loginSub: "사용자 이름만 입력하면 시작할 수 있어요 — 비밀번호 필요 없음.",
+    loginTitle: "Dew AI", loginSub: "사용자 이름만 입력하면 시작할 수 있어요 — 비밀번호 필요 없음.",
     loginBtn: "로그인", loginHint: "채팅은 클라우드에 저장되어 언제든 어떤 기기에서든 복구할 수 있어요.",
     chatsBtn: "💬 채팅", statsBtn: "통계", trainBtn: "학습", logoutBtn: "로그아웃",
     chatsTitle: "내 채팅", newChatBtn: "＋ 새 채팅", recoverBtn: "☁ 복구",
@@ -203,9 +219,9 @@ const UI_STRINGS = {
   },
 };
 
-const LANGS = ["en", "es", "fr", "de", "it", "pt", "ru", "tr", "ar", "hi", "zh", "ja", "ko"];
+const LANGS = ["en", "si", "es", "fr", "de", "it", "pt", "ru", "tr", "ar", "hi", "zh", "ja", "ko"];
 const LANG_NAMES = {
-  en: "English", es: "Español", fr: "Français", de: "Deutsch", it: "Italiano",
+  en: "English", si: "සිංහල", es: "Español", fr: "Français", de: "Deutsch", it: "Italiano",
   pt: "Português", ru: "Русский", tr: "Türkçe", ar: "العربية", hi: "हिन्दी",
   zh: "中文", ja: "日本語", ko: "한국어",
 };
@@ -241,18 +257,39 @@ function escapeHtml(s) {
   }[c]));
 }
 
+function inlineMd(s) {
+  return s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+
 function renderRich(text) {
-  let html = escapeHtml(text);
-  html = html.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-  html = html.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  /* ChatGPT-style light markdown: **bold**, `code`, [links], - lists,
+     1. numbered lines, headings (#/##), line breaks. */
+  const lines = escapeHtml(text).split("\n");
+  let html = "", inList = false;
+  const closeList = () => { if (inList) { html += "</ul>"; inList = false; } };
+  for (const line of lines) {
+    const li = line.match(/^\s*[-•*]\s+(.*)/);
+    const ol = line.match(/^\s*\d+[.)]\s+(.*)/);
+    const h = line.match(/^#{1,4}\s+(.*)/);
+    if (li) { if (!inList) { html += '<ul class="md-list">'; inList = true; }
+              html += `<li>${inlineMd(li[1])}</li>`; continue; }
+    closeList();
+    if (h) { html += `<div class="md-h">${inlineMd(h[1])}</div>`; continue; }
+    if (ol) { html += `<div class="md-li">${inlineMd(ol[1])}</div>`; continue; }
+    if (line.trim() === "") { html += "<br>"; continue; }
+    html += `<div>${inlineMd(line)}</div>`;
+  }
+  closeList();
   return html;
 }
 
 const SOURCE_LABELS = {
   neural: "🧠 neural net", search: "🌐 web search",
   template: "💬 quick reply", fallback: "🎓 still learning",
+  knowledge: "📚 dataset memory",
 };
 
 function authHeaders(extra = {}) {
@@ -272,6 +309,17 @@ function addMessage(role, text, meta = {}) {
   bubble.className = "bubble";
   bubble.innerHTML = role === "user" ? escapeHtml(text) : renderRich(text);
   wrap.appendChild(bubble);
+
+  // generated image
+  if (role !== "user" && meta.image && meta.image.url) {
+    const img = document.createElement("img");
+    img.className = "gen-image";
+    img.src = meta.image.url;
+    img.alt = text || "generated image";
+    img.loading = "lazy";
+    img.onclick = () => window.open(meta.image.url, "_blank");
+    wrap.appendChild(img);
+  }
 
   const metaEl = document.createElement("div");
   metaEl.className = "meta";
@@ -299,8 +347,22 @@ function addMessage(role, text, meta = {}) {
     if (meta.messageId) {
       const up = document.createElement("button");
       const down = document.createElement("button");
+      const speak = document.createElement("button");
+      const copy = document.createElement("button");
+      const regen = document.createElement("button");
       up.className = "fb"; up.textContent = "👍"; up.title = "good answer";
       down.className = "fb"; down.textContent = "👎"; down.title = "bad answer";
+      speak.className = "fb"; speak.textContent = "🔊"; speak.title = "read aloud";
+      copy.className = "fb"; copy.textContent = t("copy"); copy.title = "copy answer";
+      regen.className = "fb regen"; regen.textContent = t("regen");
+      regen.title = "generate a new answer";
+      regen.onclick = () => regenerateLast();
+      copy.onclick = async () => {
+        try { await navigator.clipboard.writeText(bubble.innerText); } catch {}
+        copy.textContent = "✓";
+        setTimeout(() => { copy.textContent = t("copy"); }, 1200);
+      };
+      speak.onclick = () => speakText(bubble.textContent);
       const vote = (rating, btn, other) => {
         fetch("/api/feedback", {
           method: "POST",
@@ -317,6 +379,9 @@ function addMessage(role, text, meta = {}) {
       down.onclick = () => vote(-1, down, up);
       metaEl.appendChild(up);
       metaEl.appendChild(down);
+      metaEl.appendChild(speak);
+      metaEl.appendChild(copy);
+      metaEl.appendChild(regen);
     }
   }
 
@@ -325,8 +390,47 @@ function addMessage(role, text, meta = {}) {
   return { wrap, bubble, metaEl };
 }
 
+/* keep ↻ only on the newest bot message (ChatGPT behaviour) */
+function markLastRegen(wrap) {
+  for (const el of messagesEl.querySelectorAll(".regen")) el.remove();
+  if (wrap) {
+    const btn = wrap.querySelector(".regen");
+    if (btn) btn.classList.remove("hidden");
+  }
+}
+
+async function regenerateLast() {
+  if (!conversationId || generating) return;
+  setStage("thinking");
+  sendBtn.disabled = true;
+  try {
+    const res = await fetch(`/api/chat/${conversationId}/regenerate`, {
+      method: "POST", headers: authHeaders(),
+    });
+    const data = await res.json();
+    if (res.ok && data.reply !== undefined) {
+      const lastBot = [...messagesEl.querySelectorAll(".msg.bot")].pop();
+      if (lastBot) lastBot.remove();
+      addMessage("bot", data.reply, {
+        source: data.source, confidence: data.confidence, lang: data.lang,
+        sources: data.sources, messageId: data.message_id, image: data.image,
+      });
+    } else if (data.detail) {
+      showNotice(`⚠️ ${data.detail}`);
+    }
+  } catch { showNotice("⚠️ regenerate failed"); }
+  hideTyping();
+  sendBtn.disabled = false;
+}
+
 function setStage(stage) {
-  typingLabel.textContent = t(stage) || stage;
+  const labels = {
+    thinking: "thinking…", searching: "searching the web…",
+    generating: "generating with my neural net…",
+    painting: "painting your image…", tool: "running the task…",
+    listening: "listening…",
+  };
+  typingLabel.textContent = t(stage) || labels[stage] || stage;
   typingEl.classList.remove("hidden");
 }
 
@@ -459,6 +563,54 @@ langSelect.onchange = async () => {
 };
 
 /* ------------------------------------------------------------------ */
+/* voice: speech-to-text (mic) + text-to-speech (speaker)              */
+/* ------------------------------------------------------------------ */
+const micBtn = $("#micBtn");
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+
+if (SR) {
+  recognition = new SR();
+  recognition.lang = uiLang === "en" ? "en-US" : `${uiLang}-${uiLang.toUpperCase()}`;
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.onresult = (e) => {
+    const said = e.results[0][0].transcript;
+    inputEl.value = said;
+    autosize();
+    send();
+  };
+  recognition.onend = () => {
+    micBtn.classList.remove("listening");
+    micBtn.textContent = "🎙";
+  };
+  recognition.onerror = () => micBtn.classList.remove("listening");
+} else {
+  micBtn.disabled = true;
+  micBtn.title = "speech recognition not supported in this browser";
+}
+
+micBtn.onclick = () => {
+  if (!recognition) return;
+  if (micBtn.classList.contains("listening")) {
+    recognition.stop();
+    return;
+  }
+  recognition.lang = uiLang === "en" ? "en-US" : `${uiLang}-${uiLang.toUpperCase()}`;
+  micBtn.classList.add("listening");
+  micBtn.textContent = "⏺";
+  try { recognition.start(); } catch { /* already started */ }
+};
+
+function speakText(text) {
+  if (!("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text.slice(0, 300));
+  u.lang = uiLang === "en" ? "en-US" : `${uiLang}-${uiLang.toUpperCase()}`;
+  window.speechSynthesis.speak(u);
+}
+
+/* ------------------------------------------------------------------ */
 /* websocket                                                           */
 /* ------------------------------------------------------------------ */
 function connect() {
@@ -526,23 +678,28 @@ function handleMessage(msg) {
 
     case "done": {
       hideTyping();
+      generating = false;
+      stopBtn.classList.add("hidden");
       conversationId = msg.conversation_id;
       localStorage.setItem("nc_conv_id", conversationId);
       if (currentBot) {
         currentBot.bubble.innerHTML = renderRich(msg.reply);
         const meta = {
           source: msg.source, confidence: msg.confidence, lang: msg.lang,
-          sources: msg.sources, messageId: msg.message_id,
+          sources: msg.sources, messageId: msg.message_id, image: msg.image,
         };
         const wrap = currentBot.wrap;
         wrap.querySelector(".meta").remove();
         const fresh = addMessage("bot", msg.reply, meta);
         wrap.replaceWith(fresh.wrap);
+        markLastRegen(fresh.wrap);
       } else {
-        addMessage("bot", msg.reply, msg);
+        const fresh = addMessage("bot", msg.reply, msg);
+        markLastRegen(fresh.wrap);
       }
       currentBot = null;
       sendBtn.disabled = false;
+      showSuggestions(msg.suggestions);
       refreshStatsIfOpen();
       refreshChats();
       break;
@@ -573,8 +730,39 @@ function send() {
   inputEl.value = "";
   autosize();
   sendBtn.disabled = true;
+  generating = true;
+  stopBtn.classList.remove("hidden");
   setStage("thinking");
   ws.send(JSON.stringify({ type: "chat", text, conversation_id: conversationId }));
+}
+
+function stopGeneration() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "stop", conversation_id: conversationId }));
+  }
+  generating = false;
+  stopBtn.classList.add("hidden");
+  hideTyping();
+  sendBtn.disabled = false;
+}
+
+stopBtn.onclick = stopGeneration;
+
+function showSuggestions(list) {
+  const old = document.querySelector(".suggestions");
+  if (old) old.remove();
+  if (!list || !list.length) return;
+  const bar = document.createElement("div");
+  bar.className = "suggestions";
+  for (const s of list) {
+    const chip = document.createElement("button");
+    chip.className = "suggestion-chip";
+    chip.textContent = s;
+    chip.onclick = () => { bar.remove(); inputEl.value = s; autosize(); send(); };
+    bar.appendChild(chip);
+  }
+  messagesEl.appendChild(bar);
+  scrollBottom();
 }
 
 sendBtn.onclick = send;
@@ -667,9 +855,10 @@ async function openConversation(id) {
     if (!res.ok) return;
     const rows = await res.json();
     for (const m of rows.slice(-50)) {
-      addMessage(m.role === "user" ? "user" : "bot", m.content, {
+      const added = addMessage(m.role === "user" ? "user" : "bot", m.content, {
         source: m.source, confidence: m.confidence, lang: m.lang, messageId: m.id,
       });
+      if (m.role !== "user") markLastRegen(added.wrap);
     }
   } catch { /* ignore */ }
 }

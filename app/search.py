@@ -19,7 +19,7 @@ import requests
 SEARCH_URL = "https://lite.duckduckgo.com/lite/"
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/120.0 Safari/537.36 NeuroChat/0.1",
+                  "(KHTML, like Gecko) Chrome/120.0 Safari/537.36 DewAI/0.2",
     "Accept-Language": "en-US,en;q=0.9",
 }
 
@@ -38,7 +38,7 @@ FACT_RE = re.compile(
     re.I,
 )
 FORCE_RE = re.compile(r"^\s*(?:search(?:\s+for)?|google|look\s*up|buscar|chercher|suche|cerca"
-                      r"|pesquisar|поиск|ara|ابحث|खोजो|搜索|検索|검색|بحث)\s*[:：\-]?\s+(.{3,})", re.I)
+                      r"|pesquisar|поиск|ara|ابحث|खोजो|搜索|検索|검색|بحث|සොයන්න|සොයන)\s*[:：\-]?\s+(.{3,})", re.I)
 
 
 def needs_search(text: str) -> Optional[str]:

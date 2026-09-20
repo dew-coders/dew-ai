@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>NeuroChat — a neural net built from scratch</title>
+  <title>Dew AI — a neural net built from scratch</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -11,7 +11,7 @@
   <div id="loginOverlay" class="login-overlay hidden">
     <div class="login-card">
       <div class="logo">◉</div>
-      <h1 data-i18n="loginTitle">NeuroChat</h1>
+      <h1 data-i18n="loginTitle">Dew AI</h1>
       <p class="login-sub" data-i18n="loginSub">Enter a username to start chatting — no password needed.</p>
       <input id="usernameInput" maxlength="24" autocomplete="username"
          spellcheck="false" placeholder="username" />
@@ -25,7 +25,7 @@
     <div class="brand">
       <div class="logo">◉</div>
       <div>
-        <h1>NeuroChat</h1>
+        <h1>Dew AI</h1>
         <p class="tagline" data-i18n="tagline">a neural network built from scratch — it learns from every chat</p>
       </div>
     </div>
@@ -53,9 +53,11 @@
   <div id="noticeBar" class="notice-bar"></div>
 
   <footer class="composer">
+    <button id="micBtn" class="btn ghost icon" title="Voice input">🎙</button>
     <textarea id="input" rows="1"
       placeholder="Say something…  (or try: search: latest AI news)"></textarea>
     <button id="sendBtn" class="btn primary" disabled>Send</button>
+    <button id="stopBtn" class="hidden" title="stop generating">⏹</button>
   </footer>
 
   <!-- chats / recovery sidebar -->
