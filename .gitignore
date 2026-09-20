@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Generated model & data artifacts (data/seed_corpus.txt IS committed)
+data/chat.db*
+data/model_weights.npz
+data/model_weights.tmp.npz
+data/vocab.json
+data/train.txt

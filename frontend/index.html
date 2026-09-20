@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NeuroChat — a neural net built from scratch</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">◉</div>
+      <div>
+        <h1>NeuroChat</h1>
+        <p class="tagline">a neural network built from scratch — it learns from every chat</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span id="connDot" class="dot off" title="connecting…"></span>
+      <span id="modelBadge" class="badge">connecting…</span>
+      <button id="statsBtn" class="btn ghost">Stats</button>
+      <button id="trainBtn" class="btn primary">Train now</button>
+    </div>
+  </header>
+
+  <main class="chat">
+    <div id="messages" class="messages"></div>
+    <div id="typing" class="typing hidden">
+      <span class="tdot"></span><span class="tdot"></span><span class="tdot"></span>
+      <span id="typingLabel" class="typing-label">thinking…</span>
+    </div>
+  </main>
+
+  <div id="noticeBar" class="notice-bar"></div>
+
+  <footer class="composer">
+    <textarea id="input" rows="1"
+      placeholder="Say something…  (or try: search: latest AI news)"></textarea>
+    <button id="sendBtn" class="btn primary" disabled>Send</button>
+  </footer>
+
+  <aside id="statsPanel" class="stats-panel hidden">
+    <div class="stats-head">
+      <h2>Live stats</h2>
+      <button id="statsClose" class="btn ghost">✕</button>
+    </div>
+    <div id="statsBody" class="stats-body">Loading…</div>
+  </aside>
+
+  <script src="app.js"></script>
+</body>
+</html>
