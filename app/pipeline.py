@@ -12,11 +12,11 @@ from typing import Dict, Optional
 from app import config, database as db, train
 
 
-def record_exchange(prompt: str, response: str, source: str) -> None:
+def record_exchange(prompt: str, response: str, source: str, lang: str = "en") -> None:
     """Store one user/assistant exchange as a future training sample."""
     if prompt and response:
         db.add_training_sample(prompt=prompt.strip(), response=response.strip(),
-                               source=source)
+                               source=source, lang=lang)
 
 
 def maybe_start_retrain(force: bool = False) -> Optional[int]:

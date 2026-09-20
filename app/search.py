@@ -37,7 +37,8 @@ FACT_RE = re.compile(
     r"age|ceo|president|history|release date)\b",
     re.I,
 )
-FORCE_RE = re.compile(r"^\s*(?:search(?:\s+for)?|google|look\s*up)\s*[:\-]?\s+(.{3,})", re.I)
+FORCE_RE = re.compile(r"^\s*(?:search(?:\s+for)?|google|look\s*up|buscar|chercher|suche|cerca"
+                      r"|pesquisar|поиск|ara|ابحث|खोजो|搜索|検索|검색|بحث)\s*[:：\-]?\s+(.{3,})", re.I)
 
 
 def needs_search(text: str) -> Optional[str]:

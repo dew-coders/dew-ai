@@ -4,6 +4,9 @@ __pycache__/
 .venv/
 .pytest_cache/
 
+# Secrets (Supabase keys etc.)
+.env
+
 # Generated model & data artifacts (data/seed_corpus.txt IS committed)
 data/chat.db*
 data/model_weights.npz

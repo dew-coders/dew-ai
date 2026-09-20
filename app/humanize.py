@@ -1,6 +1,9 @@
 """Response post-processing: small deterministic transforms that make the
 tiny model's output feel more conversational ("humanized") — contractions,
 gentle softeners, clean punctuation.
+
+English-only transforms (contractions, softeners, capitalization) are skipped
+for other languages so Arabic/Hindi/CJK text isn't mangled.
 """
 from __future__ import annotations
 
@@ -41,13 +44,20 @@ def _stable_hash(s: str) -> int:
     return zlib.crc32(s.encode("utf-8"))
 
 
-def humanize(text: str, allow_softener: bool = True) -> str:
+def humanize(text: str, allow_softener: bool = True, lang: str = "en") -> str:
     t = re.sub(r"\s+", " ", (text or "")).strip()
     if not t:
         return t
 
     # Tidy spacing around punctuation.
     t = re.sub(r"\s+([,.!?;:])", r"\1", t)
+
+    if lang != "en":
+        # Other languages: keep it light — no contractions, casing or forced
+        # trailing punctuation (wrong for e.g. Arabic, Hindi, Chinese).
+        t = re.sub(r"!{2,}", "!", t)
+        t = re.sub(r"\.{4,}", "...", t)
+        return t
 
     # Natural contractions.
     for pat, rep in CONTRACTIONS:

@@ -7,19 +7,38 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- username-only login -->
+  <div id="loginOverlay" class="login-overlay hidden">
+    <div class="login-card">
+      <div class="logo">◉</div>
+      <h1 data-i18n="loginTitle">NeuroChat</h1>
+      <p class="login-sub" data-i18n="loginSub">Enter a username to start chatting — no password needed.</p>
+      <input id="usernameInput" maxlength="24" autocomplete="username"
+         spellcheck="false" placeholder="username" />
+      <p id="loginError" class="login-error hidden"></p>
+      <button id="loginBtn" class="btn primary wide" data-i18n="loginBtn">Log in</button>
+      <p class="login-hint" data-i18n="loginHint">Your chats are saved to the cloud, so you can recover them anytime on any device.</p>
+    </div>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <div class="logo">◉</div>
       <div>
         <h1>NeuroChat</h1>
-        <p class="tagline">a neural network built from scratch — it learns from every chat</p>
+        <p class="tagline" data-i18n="tagline">a neural network built from scratch — it learns from every chat</p>
       </div>
     </div>
     <div class="topbar-actions">
+      <select id="langSelect" class="lang-select" title="Interface language">
+      </select>
       <span id="connDot" class="dot off" title="connecting…"></span>
       <span id="modelBadge" class="badge">connecting…</span>
-      <button id="statsBtn" class="btn ghost">Stats</button>
-      <button id="trainBtn" class="btn primary">Train now</button>
+      <button id="chatsBtn" class="btn ghost" data-i18n="chatsBtn">💬 Chats</button>
+      <button id="statsBtn" class="btn ghost" data-i18n="statsBtn">Stats</button>
+      <button id="trainBtn" class="btn primary" data-i18n="trainBtn">Train now</button>
+      <span id="userChip" class="badge user-chip hidden">👤 <span id="userName"></span></span>
+      <button id="logoutBtn" class="btn ghost hidden" data-i18n="logoutBtn">Log out</button>
     </div>
   </header>
 
@@ -38,6 +57,19 @@
       placeholder="Say something…  (or try: search: latest AI news)"></textarea>
     <button id="sendBtn" class="btn primary" disabled>Send</button>
   </footer>
+
+  <!-- chats / recovery sidebar -->
+  <aside id="chatsPanel" class="chats-panel hidden">
+    <div class="chats-head">
+      <h2 data-i18n="chatsTitle">Your chats</h2>
+      <button id="chatsClose" class="btn ghost">✕</button>
+    </div>
+    <div class="chats-actions">
+      <button id="newChatBtn" class="btn primary" data-i18n="newChatBtn">＋ New chat</button>
+      <button id="recoverBtn" class="btn ghost" data-i18n="recoverBtn">☁ Recover</button>
+    </div>
+    <div id="chatsList" class="chats-list"></div>
+  </aside>
 
   <aside id="statsPanel" class="stats-panel hidden">
     <div class="stats-head">

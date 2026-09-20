@@ -40,28 +40,28 @@ def status() -> Dict:
 # Dataset construction (seed corpus + collected conversations)
 # --------------------------------------------------------------------------- #
 def build_training_text() -> Tuple[str, int, int]:
-    """Returns (corpus_text, sample_count, max_sample_id)."""
+    """Returns (corpus_text, sample_count, cutoff_created_at)."""
     parts: List[str] = []
     if config.SEED_CORPUS_PATH.exists():
         parts.append(config.SEED_CORPUS_PATH.read_text(encoding="utf-8"))
 
     samples = db.get_training_samples(exclude_negative=True)
-    cutoff = db.last_completed_run_max_sample_id()
-    max_id = 0
+    cutoff = db.last_completed_run_cutoff()
+    cutoff_new = ""
 
     for s in samples:
-        max_id = max(max_id, s["id"])
+        cutoff_new = max(cutoff_new, s["created_at"])
         block = f"User: {s['prompt']}\nBot: {s['response']}\n\n"
         reps = 1
         if s["quality"] and s["quality"] > 0:
             reps += 1                      # upvoted replies get extra weight
-        if s["id"] > cutoff:
+        if s["created_at"] > cutoff:
             reps += 2                      # freshly collected data gets extra weight
         parts.extend([block] * reps)
 
     text = "".join(parts)
     config.TRAIN_TEXT_PATH.write_text(text, encoding="utf-8")
-    return text, len(samples), max_id
+    return text, len(samples), cutoff_new
 
 
 # --------------------------------------------------------------------------- #
@@ -78,7 +78,7 @@ def run_training(steps: int, trigger: str = "manual") -> int:
         state.update(running=True, progress="building-dataset", last_message="")
         run_id = db.start_training_run(trigger, steps)
 
-        text, n_samples, max_sample_id = build_training_text()
+        text, n_samples, cutoff_created = build_training_text()
         data_stream = text[-600_000:] if len(text) > 600_000 else text
 
         # Vocabulary: reuse the saved one so existing weights stay compatible.
@@ -133,9 +133,9 @@ def run_training(steps: int, trigger: str = "manual") -> int:
 
         loss_before = float(np.mean(losses[: min(5, len(losses))]))
         loss_after = float(np.mean(losses[-min(20, len(losses)):]))
-        db.finish_training_run(run_id, "done", n_samples, max_sample_id,
+        db.finish_training_run(run_id, "done", n_samples, 0,
                                loss_before, loss_after)
-        db.mark_samples_used(max_sample_id)
+        db.mark_samples_used(cutoff_created)
         state.update(progress="done",
                      last_message=f"done in {time.time() - t0:.1f}s — "
                                   f"loss {loss_before:.3f} → {loss_after:.3f}")

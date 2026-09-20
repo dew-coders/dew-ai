@@ -1,7 +1,26 @@
 """Central configuration: paths, model hyper-parameters, training settings."""
+from __future__ import annotations
+
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_env() -> None:
+    """Tiny .env loader (no dependency): KEY=VALUE lines, existing env wins."""
+    env_file = ROOT / ".env"
+    if not env_file.exists():
+        return
+    for raw in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_env()
 
 DATA_DIR = ROOT / "data"
 FRONTEND_DIR = ROOT / "frontend"
@@ -40,5 +59,20 @@ TOP_P = 0.92
 MAX_NEW_TOKENS = 220
 LOW_CONFIDENCE_THRESHOLD = 0.30   # below this the bot prefers search/templates
 
+# ----------------------------- Supabase (cloud database) --------------------
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip()
+
+# Chat saves go to fast local SQLite first; a background worker syncs them to
+# Supabase. Set SYNC_ENABLED=0 to run fully offline.
+SYNC_ENABLED = os.environ.get("SYNC_ENABLED", "1").lower() not in ("0", "false", "no")
+SYNC_INTERVAL = float(os.environ.get("SYNC_INTERVAL", "1.0"))   # seconds between pushes
+SYNC_BATCH = int(os.environ.get("SYNC_BATCH", "50"))            # rows per push
+SYNC_MAX_ATTEMPTS = int(os.environ.get("SYNC_MAX_ATTEMPTS", "40"))
+
+# ----------------------------- Languages ------------------------------------
+DEFAULT_LANG = os.environ.get("DEFAULT_LANG", "en")
+
+# ----------------------------- Server ---------------------------------------
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 8000
